@@ -49,7 +49,15 @@ jobs:
         # imports via rollup. The fix npm itself recommends in the error
         # message: delete the lockfile and let `npm install` resolve fresh
         # for this platform.
+        #
+        # Because the lockfile is gone, this resolves whatever the registry
+        # has today. The npm 10.9.x bundled with Node 22 has an arborist bug
+        # in peer-dependency resolution ("Cannot read properties of null
+        # (reading 'edgesOut')") that newer versions of our dependencies
+        # trigger; npm 11 resolves the same tree fine. Upgrade npm first.
         run: |
+          npm install -g npm@11
+          npm --version
           rm -f package-lock.json
           npm install --no-audit --no-fund
 
