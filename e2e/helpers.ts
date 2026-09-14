@@ -30,10 +30,10 @@ export async function waitForAppReady(
  * Wait for the merchant home to be ready.
  *
  * There is no merchant/customer landing step anymore: once the host
- * connection resolves, `/` auto-redirects to the merchant home (`/home`).
- * This waits for that home to render (bottom nav present) instead of clicking
- * a (no-longer-existent) "merchant" button. Kept under the old name so the
- * specs read the same.
+ * connection resolves, `/` auto-redirects to Check out (`/terminal`), the
+ * amount keypad. This waits for the app shell to render (bottom nav present)
+ * instead of clicking a (no-longer-existent) "merchant" button. Kept under
+ * the old name so the specs read the same.
  */
 export async function selectMerchantMode(
   frame: FrameLocator,

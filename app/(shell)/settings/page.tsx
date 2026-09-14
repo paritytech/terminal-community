@@ -13,6 +13,7 @@ import {
   Store,
   UserRound,
 } from "lucide-react";
+import { FEATURES } from "@/lib/config/features";
 import { useMerchantProfile } from "@/lib/config/merchant";
 
 interface SettingsRow {
@@ -120,8 +121,9 @@ export default function SettingsPage() {
               </span>
               <ChevronRight className="w-5 h-5 text-neutral-500 shrink-0" />
             </button>
-          ) : (
-            /* Not onboarded yet: entry into the Become a Merchant flow */
+          ) : FEATURES.becomeMerchant ? (
+            /* Not onboarded yet: entry into the Become a Merchant flow
+               (parked behind the feature flag for R1) */
             <Link
               href="/merchant"
               className="w-full mt-6 flex items-center gap-4 bg-neutral-900 hover:bg-neutral-800 rounded-2xl p-5 text-left transition"
@@ -135,7 +137,7 @@ export default function SettingsPage() {
               </span>
               <ChevronRight className="w-5 h-5 text-neutral-500 shrink-0" />
             </Link>
-          )}
+          ) : null}
         </main>
       </div>
     </div>

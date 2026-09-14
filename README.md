@@ -25,6 +25,24 @@ npm run test:e2e     # playwright
 Copy [.env.example](.env.example) to `.env.local` and fill in the values before
 running against a live chain.
 
+## Feature flags
+
+UI features that are built but parked for the current release are gated by
+build-time constants in `lib/config/features.ts`. Flip the default there, or
+set the matching `NEXT_PUBLIC_FEATURE_*` variable for a single build:
+
+```sh
+NEXT_PUBLIC_FEATURE_BECOME_MERCHANT=1 npm run build
+```
+
+| Flag | Env var | Default | Gates |
+| --- | --- | --- | --- |
+| `becomeMerchant` | `NEXT_PUBLIC_FEATURE_BECOME_MERCHANT` | off | "Become a Merchant" entry points (Home tile, Settings card) |
+| `nfcTapToPay` | `NEXT_PUBLIC_FEATURE_NFC_TAP_TO_PAY` | off | NFC tap-to-pay on the payment QR screen (HCE emit + banner text) |
+
+The values are inlined by the static export, so a flag can't change at
+runtime — rebuild to toggle.
+
 ## Deploy
 
 `npm run deploy` is an interactive command that generates or imports a wallet,

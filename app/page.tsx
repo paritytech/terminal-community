@@ -21,13 +21,14 @@ export default function Home() {
   // There's no landing/splash step anymore. Inside the host the account is
   // auto-detected (lib/web3/components/providers/web3-provider.tsx →
   // HostAutoConnect); once it resolves the terminal is configured, so we go
-  // straight to the Home dashboard. `replace` keeps `/` out of history so the
-  // back button doesn't bounce the merchant onto a dead landing page.
+  // straight to Check out — the amount keypad is the first thing a merchant
+  // sees, taking a payment is one tap away. `replace` keeps `/` out of history
+  // so the back button doesn't bounce the merchant onto a dead landing page.
   useEffect(() => {
     if (account) {
       journeyTracker.milestone("page-load", "account-resolved");
       journeyTracker.complete("page-load");
-      router.replace("/home");
+      router.replace("/terminal");
     }
   }, [account, router]);
 

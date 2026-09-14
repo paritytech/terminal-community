@@ -24,6 +24,9 @@ import {
   QrCode,
 } from "lucide-react";
 import { useNavLock, useNavHidden } from "@/components/nav-lock";
+import { AmountHero } from "@/components/amount-hero";
+import { ScreenHeader } from "@/components/screen-header";
+import { FEATURES } from "@/lib/config/features";
 import { useAccount } from "@/lib/web3";
 import { QRCodeSVG } from "qrcode.react";
 import { useQRGenerator } from "@/lib/hooks/use-qr-generator";
@@ -59,7 +62,9 @@ import { useCheckoutItems, type CheckoutItem } from "@/lib/config/checkout-items
 
 const ASSET_ID_STR = PUSD_ASSET_ID.toString();
 
-type TerminalState = "input" | "review" | "qr" | "completed" | "receipt" | "share";
+// Charge on the amount screen arms the QR directly — there's no review step in
+// between (the optional receipt note lives inline on the amount screen).
+type TerminalState = "input" | "qr" | "completed" | "receipt" | "share";
 
 // POS-style cents entry: digits fill from the right ("5" → 0.05, "500" → 5.00).
 // Hard cap keeps the display sane — 9 digits = 9,999,999.99.
@@ -121,8 +126,10 @@ function TerminalPageInner() {
   const { terminalId } = useTerminalIdentity();
   // POS keypad state — a plain digit string interpreted as cents.
   const [amountDigits, setAmountDigits] = useState("");
-  // Merchant note from the Review-sale step; stored on the sale record.
+  // Optional merchant note, typed inline on the amount screen (behind an
+  // "Add note" toggle); stored on the sale record and shown on the receipt.
   const [note, setNote] = useState("");
+  const [noteOpen, setNoteOpen] = useState(false);
   const enteredAmount = centsToDecimal(amountDigits);
   const hasAmount = amountDigits !== "" && BigInt(amountDigits) > 0n;
 
@@ -540,6 +547,8 @@ function TerminalPageInner() {
   // as the QR (payment only — never the receipt). Emits only while the QR is
   // actually presented; cleared the moment a payment starts arriving, the sale
   // ends, the deeplink changes, or we unmount. No-ops when the host has no NFC.
+  // Parked behind FEATURES.nfcTapToPay for R1 — off means nothing is emitted
+  // and the banner doesn't mention NFC.
   const paymentQrLive =
     saleInProgress &&
     !!displayQrValue &&
@@ -548,7 +557,7 @@ function TerminalPageInner() {
     !(useCoins && (coinage.status === "claiming" || coinage.status === "paid"));
 
   useEffect(() => {
-    if (!paymentQrLive || !displayQrValue) return;
+    if (!FEATURES.nfcTapToPay || !paymentQrLive || !displayQrValue) return;
     void publishNfcPaymentDeeplink(displayQrValue).catch((err) => {
       console.warn("[NFC] payment deeplink publish failed:", err);
     });
@@ -614,34 +623,13 @@ function TerminalPageInner() {
     setBasketOpen(false);
   };
 
-  // Basket → Review: the cart total becomes the keypad amount (cents) so the
-  // whole downstream flow (review, QR, listener reconciliation) is untouched,
-  // and the lines are stashed for the itemized receipt.
-  const handleChargeCart = () => {
-    if (!account || cartCount === 0) return;
-    const cents = cartTotalPlanks / 10n ** BigInt(PUSD_DECIMALS - 2);
-    setAmountDigits(cents.toString());
-    setPendingItems(
-      cart.map((line) => ({
-        name: line.name,
-        pricePlanks: line.pricePlanks.toString(),
-        quantity: line.quantity,
-      })),
-    );
-    setBasketOpen(false);
-    setTerminalState("review");
-  };
-
-  // Keypad → Review: nothing on-chain happens yet, just amount validation.
-  const handleCharge = () => {
-    if (!account || !hasAmount) return;
-    setTerminalState("review");
-  };
-
-  // Review → QR. The amber "Generating Payment" banner covers the connectivity
-  // pre-flight (isGenerating) and the QR value computation.
-  const handleGenerateQR = async () => {
-    if (!account || !hasAmount) return;
+  // Arm the payment QR for `amountDecimal`. Nothing on-chain happens yet. The
+  // amber "Generating Payment" banner covers the connectivity pre-flight
+  // (isGenerating) and the QR value computation. Takes the amount explicitly
+  // (rather than reading `enteredAmount`) because the basket path sets the
+  // keypad digits in the same tick it calls this.
+  const startPayment = async (amountDecimal: string) => {
+    if (!account) return;
 
     setConnectivityError(null);
     setIsGenerating(true);
@@ -653,14 +641,42 @@ function TerminalPageInner() {
     if (!reachable) {
       setIsGenerating(false);
       setTerminalState("input");
+      // Items mode got here with keypad digits derived from the basket — drop
+      // them so the Amount tab comes back clean; the basket itself is
+      // untouched and re-chargeable.
+      if (itemsMode && cart.length > 0) setAmountDigits("");
       setConnectivityError(
         "No connection — can't reach the network to receive the payment. Check WiFi and try again.",
       );
       return;
     }
 
-    setFinalAmount(enteredAmount);
+    setFinalAmount(amountDecimal);
     setIsGenerating(false);
+  };
+
+  // Basket → QR: the cart total becomes the keypad amount (cents) so the
+  // whole downstream flow (QR screen, listener reconciliation) is untouched,
+  // and the lines are stashed for the itemized receipt.
+  const handleChargeCart = () => {
+    if (!account || cartCount === 0) return;
+    const cents = (cartTotalPlanks / 10n ** BigInt(PUSD_DECIMALS - 2)).toString();
+    setAmountDigits(cents);
+    setPendingItems(
+      cart.map((line) => ({
+        name: line.name,
+        pricePlanks: line.pricePlanks.toString(),
+        quantity: line.quantity,
+      })),
+    );
+    setBasketOpen(false);
+    void startPayment(centsToDecimal(cents));
+  };
+
+  // Keypad → QR: just amount validation, then straight to the payment screen.
+  const handleCharge = () => {
+    if (!hasAmount) return;
+    void startPayment(enteredAmount);
   };
 
   const handleReset = () => {
@@ -669,6 +685,7 @@ function TerminalPageInner() {
     journeyTracker.abandon("terminal-payment");
     setAmountDigits("");
     setNote("");
+    setNoteOpen(false);
     setFinalAmount("");
     setPaymentReceived(null);
     setPartial(null);
@@ -797,6 +814,17 @@ function TerminalPageInner() {
     const qtyInCart = (id: string) =>
       cart.find((line) => line.id === id)?.quantity ?? 0;
 
+    // Optional receipt note, same inline control as the plain keypad screen;
+    // lives in the basket, right above Charge.
+    const noteField = (
+      <NoteField
+        value={note}
+        onChange={setNote}
+        open={noteOpen}
+        onOpenChange={setNoteOpen}
+      />
+    );
+
     const connectivityWarning = (!connectivity.isOnline || connectivityError) && (
       <div
         data-testid="terminal-connectivity-warning"
@@ -924,13 +952,15 @@ function TerminalPageInner() {
                 ))}
 
                 <div className="flex-1" />
+                <div className="pt-4">{noteField}</div>
                 {dock}
               </main>
             </>
           ) : (
             <>
-              {/* Amount | Items tabs — Items is the default */}
-              <header className="px-6 py-5 flex items-baseline gap-4 shrink-0">
+              {/* Amount | Items tabs — Items is the default. Fixed h-20 so the
+                  header matches ScreenHeader's height on the other tabs. */}
+              <header className="px-6 h-20 flex items-center gap-4 shrink-0">
                 <button
                   onClick={() => setActiveTab("amount")}
                   className={`text-3xl font-bold transition-colors ${
@@ -1015,18 +1045,12 @@ function TerminalPageInner() {
                 /* ——— Amount tab — same keypad, adds to the basket ——— */
                 <main className="flex-1 min-h-0 flex flex-col px-6 pb-4 overflow-y-auto">
                   <div className="mb-6">
-                    <p className="text-neutral-400 text-base mb-1">Enter Custom Amount</p>
-                    <div className="flex items-baseline justify-between gap-4">
-                      <span
-                        data-testid="amount-display"
-                        className="text-white text-6xl font-bold tracking-tight break-all"
-                      >
-                        {enteredAmount}
-                      </span>
-                      <span className="text-neutral-400 text-base font-semibold shrink-0">
-                        {symbol}
-                      </span>
-                    </div>
+                    <AmountHero
+                      label="Enter Custom Amount"
+                      value={enteredAmount}
+                      symbol={symbol}
+                      testId="amount-display"
+                    />
                   </div>
 
                   <div className="flex-1 flex flex-col justify-end">
@@ -1076,36 +1100,37 @@ function TerminalPageInner() {
     );
   }
 
-  // Input State — POS keypad (digits fill cents from the right)
+  // Input State — POS keypad (digits fill cents from the right). Header and
+  // amount block are the same components Home uses, so switching tabs
+  // doesn't move the figure.
   if (terminalState === "input") {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-          {/* Header */}
-          <header className="px-6 py-5">
-            <h1 data-testid="terminal-header" className="text-white text-3xl font-bold">
-              Amount
-            </h1>
-          </header>
+          <ScreenHeader title="Amount" testId="terminal-header" />
 
           {/* Main Content */}
           <main className="flex-1 flex flex-col px-6 pb-4">
-            {/* Amount Display */}
-            <div className="mb-6">
-              <p className="text-neutral-400 text-base mb-1">Enter Payment Amount</p>
-              <div className="flex items-baseline justify-between gap-4">
-                <span
-                  data-testid="amount-display"
-                  className="text-white text-6xl font-bold tracking-tight break-all"
-                >
-                  {enteredAmount}
-                </span>
-                <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
-              </div>
+            <AmountHero
+              label="Enter Payment Amount"
+              value={enteredAmount}
+              symbol={symbol}
+              testId="amount-display"
+            />
+
+            {/* Optional receipt note — a quiet "Add note" link until tapped,
+                then an inline field. No separate screen for it. */}
+            <div className="mt-4">
+              <NoteField
+                value={note}
+                onChange={setNote}
+                open={noteOpen}
+                onOpenChange={setNoteOpen}
+              />
             </div>
 
             {/* Keypad */}
-            <div className="flex-1 flex flex-col justify-end space-y-3 mb-4">
+            <div className="flex-1 flex flex-col justify-end space-y-3 mb-4 mt-6">
               <KeypadGrid onDigit={pressDigit} onBackspace={backspaceDigit} />
 
               {/* Connectivity warning — periodic offline status or a blocked attempt */}
@@ -1131,73 +1156,6 @@ function TerminalPageInner() {
                 Charge {enteredAmount} {symbol}
               </button>
             </div>
-          </main>
-        </div>
-      </div>
-    );
-  }
-
-  // Review Sale State — total + optional receipt note before arming the QR
-  if (terminalState === "review") {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-          {/* Header */}
-          <header className="flex items-center justify-between px-4 py-4">
-            <button
-              onClick={() => {
-                // Items mode reached review with keypad digits derived from
-                // the basket — drop them so the Amount tab comes back clean;
-                // the basket itself is untouched and re-chargeable.
-                if (itemsMode && cart.length > 0) setAmountDigits("");
-                setTerminalState("input");
-              }}
-              className="p-2"
-              aria-label="Back to amount"
-            >
-              <ArrowLeft className="w-6 h-6 text-white" />
-            </button>
-            <span className="text-white text-lg font-semibold">Review sale</span>
-            <div className="w-10" />
-          </header>
-
-          {/* Main Content */}
-          <main className="flex-1 flex flex-col px-6 py-4">
-            <div className="flex justify-between items-baseline gap-4 pb-6 border-b border-neutral-800 mb-6">
-              <span className="text-white text-xl font-semibold shrink-0">Total</span>
-              <span
-                data-testid="review-total"
-                className="text-white text-3xl font-bold tracking-tight text-right break-all"
-              >
-                {enteredAmount}{" "}
-                <span className="text-neutral-400 text-lg font-semibold">{symbol}</span>
-              </span>
-            </div>
-
-            <label className="block rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-4">
-              <span className="block text-neutral-500 text-sm mb-1">Add Note</span>
-              <input
-                data-testid="review-note"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                maxLength={80}
-                placeholder="e.g. Amazon Gift Card"
-                className="w-full bg-transparent text-white text-lg outline-none placeholder:text-neutral-600"
-              />
-            </label>
-            <p className="text-neutral-500 text-sm mt-2">
-              This note is only visible on your receipt
-            </p>
-
-            <div className="flex-1" />
-
-            <button
-              data-testid="btn-generate-qr"
-              onClick={handleGenerateQR}
-              className="w-full bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-xl transition text-lg"
-            >
-              Next
-            </button>
           </main>
         </div>
       </div>
@@ -1244,7 +1202,9 @@ function TerminalPageInner() {
                   ? "Payment incoming…"
                   : partial
                     ? "Receiving payment…"
-                    : "Scan QR or tap NFC to pay"}
+                    : FEATURES.nfcTapToPay
+                      ? "Scan QR or tap NFC to pay"
+                      : "Scan QR to pay"}
             </h2>
           </div>
 
@@ -1417,7 +1377,7 @@ function TerminalPageInner() {
               {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </p>
 
-            {/* Receipt note from the Review-sale step */}
+            {/* Receipt note typed on the amount screen */}
             {note.trim() && (
               <div className="flex items-center gap-3 py-3 text-white">
                 <StickyNote className="w-5 h-5 text-neutral-400 shrink-0" />
@@ -1644,6 +1604,67 @@ function TerminalPageInner() {
   }
 
   return null;
+}
+
+/**
+ * Optional receipt note on the amount screen. Collapsed it's a single quiet
+ * "Add note" link so the keypad stays the focus; tapped, it becomes an inline
+ * field (auto-focused) with an ✕ that clears and collapses it again. Used by
+ * the plain keypad screen and the items-mode basket. The note only appears on
+ * the merchant's receipt/sale record — never in the payment QR.
+ */
+function NoteField({
+  value,
+  onChange,
+  open,
+  onOpenChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  if (!open) {
+    return (
+      <button
+        type="button"
+        data-testid="btn-add-note"
+        onClick={() => onOpenChange(true)}
+        className="inline-flex items-center gap-2 text-neutral-400 hover:text-white text-sm font-medium transition py-1"
+      >
+        <StickyNote className="w-4 h-4" />
+        Add note
+      </button>
+    );
+  }
+  return (
+    <div>
+      <label className="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3">
+        <StickyNote className="w-5 h-5 text-neutral-500 shrink-0" />
+        <input
+          data-testid="sale-note"
+          autoFocus
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          maxLength={80}
+          placeholder="e.g. Amazon Gift Card"
+          className="w-full bg-transparent text-white text-base outline-none placeholder:text-neutral-600"
+        />
+        <button
+          type="button"
+          aria-label="Remove note"
+          onClick={() => {
+            onChange("");
+            onOpenChange(false);
+          }}
+          className="p-1 -mr-1 text-neutral-500 hover:text-white transition shrink-0"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </label>
+      <p className="text-neutral-500 text-xs mt-1.5">Only visible on your receipt</p>
+    </div>
+  );
 }
 
 /** The POS digit pad — shared by the plain keypad screen and the items-mode

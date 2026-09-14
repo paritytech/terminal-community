@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { ClipboardList, Settings, TrendingUp, ReceiptText, Store } from "lucide-react";
+import { AmountHero } from "@/components/amount-hero";
+import { ScreenHeader } from "@/components/screen-header";
 import { useTodaysIncome } from "@/lib/storage";
+import { FEATURES } from "@/lib/config/features";
 import { useMerchantProfile } from "@/lib/config/merchant";
 import { formatAmountFromPlanck } from "@/lib/utils/format";
 import { PUSD_DECIMALS } from "@/lib/utils/asset-ids";
@@ -12,6 +15,9 @@ import { useAssetSymbol } from "@/lib/utils/asset-metadata";
  * Merchant home dashboard. Today's Income is live from sale storage; the
  * action tiles are still placeholders (no navigation yet). The gear in the
  * header opens Settings (no longer a nav tab).
+ *
+ * Header + amount block share components with Check out so the two tabs line
+ * up pixel-for-pixel and nothing shifts when switching between them.
  */
 export default function HomePage() {
   const { totalPlanck, isLoading } = useTodaysIncome();
@@ -23,39 +29,36 @@ export default function HomePage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-        {/* Header */}
-        <header className="flex items-center justify-between px-6 py-5">
-          <h1 className="text-white text-3xl font-bold">Home</h1>
-          <Link href="/settings" aria-label="Settings" className="p-2 -mr-2">
-            <Settings className="w-6 h-6 text-white" />
-          </Link>
-        </header>
+        <ScreenHeader
+          title="Home"
+          action={
+            <Link href="/settings" aria-label="Settings" className="p-2 -mr-2">
+              <Settings className="w-6 h-6 text-white" />
+            </Link>
+          }
+        />
 
         {/* Today's income — live sum of today's incoming sales */}
         <section className="px-6 mb-8">
-          <p className="text-neutral-400 text-base mb-1">Today&apos;s Income</p>
-          <div className="flex items-baseline justify-between gap-4">
-            <span
-              data-testid="todays-income"
-              className={`text-white text-7xl font-bold tracking-tight break-all ${
-                isLoading ? "opacity-40" : ""
-              }`}
-            >
-              {formatAmountFromPlanck(totalPlanck, PUSD_DECIMALS)}
-            </span>
-            <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
-          </div>
+          <AmountHero
+            label="Today's Income"
+            value={formatAmountFromPlanck(totalPlanck, PUSD_DECIMALS)}
+            symbol={symbol}
+            testId="todays-income"
+            dimmed={isLoading}
+          />
         </section>
 
         {/* Action tiles. Sales/Export work from day one; Reports (X/Z
-            tooling) unlocks with the merchant profile. */}
+            tooling) unlocks with the merchant profile. The Become a Merchant
+            entry is parked behind FEATURES.becomeMerchant for R1. */}
         <section className="px-6 grid grid-cols-2 gap-4">
           <HomeTile icon={TrendingUp} label="Sales" accent href="/home/sales" />
           <HomeTile icon={ReceiptText} label="Export CSV" accent href="/home/export" />
           {merchant.completed && (
             <HomeTile icon={ClipboardList} label="Reports" accent href="/home/reports" />
           )}
-          {!merchant.isLoading && !merchant.completed && (
+          {FEATURES.becomeMerchant && !merchant.isLoading && !merchant.completed && (
             <HomeTile icon={Store} label="Become a Merchant" href="/merchant" />
           )}
         </section>

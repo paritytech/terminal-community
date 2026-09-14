@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { ScreenHeader } from "@/components/screen-header";
 import { useAccount } from "@/lib/web3";
 import { useSalesHistory, type SaleRecord } from "@/lib/storage";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
@@ -346,9 +347,7 @@ export default function HistoryPage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
         {/* Header */}
-        <header className="px-6 py-5 shrink-0">
-          <h1 data-testid="history-header" className="text-white text-3xl font-bold">History</h1>
-        </header>
+        <ScreenHeader title="History" testId="history-header" />
 
         {/* Search */}
         <div className="px-6 pb-3 shrink-0 flex items-center gap-3">

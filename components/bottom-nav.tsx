@@ -13,8 +13,9 @@ import { useShellNavState } from "@/components/nav-lock";
  * Lock state (taps disabled, e.g. while a sale is awaiting payment) comes from
  * the NavLock context — pages set it with useNavLock(condition).
  *
- * Tabs: Check out (sale flow: /items → /tips → /terminal), Home (dashboard,
- * gear there leads to /settings), History. Settings pages show no active tab.
+ * Tabs: Check out (sale flow: /items → /tips → /terminal — also where `/`
+ * lands once the host resolves), Home (dashboard, gear there leads to
+ * /settings), History. Settings pages show no active tab.
  */
 export function BottomNav() {
   const pathname = usePathname();
@@ -25,10 +26,11 @@ export function BottomNav() {
   if (hidden) return null;
 
   const isCheckout =
+    currentPath === "/" ||
     currentPath.startsWith("/items") ||
     currentPath.startsWith("/terminal") ||
     currentPath.startsWith("/tips");
-  const isHome = currentPath === "/" || currentPath.startsWith("/home");
+  const isHome = currentPath.startsWith("/home");
   const isHistory = currentPath.startsWith("/history");
 
   const tab = (active: boolean) =>
