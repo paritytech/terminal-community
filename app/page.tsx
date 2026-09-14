@@ -34,8 +34,10 @@ export default function Home() {
 
   // Until the host connection resolves we can't route anywhere useful, so we
   // show a minimal connecting state rather than the old "Select Items" splash.
+  // Page surface comes from the theme (body is bg-surface-main). The wordmark
+  // is set in the display style — Manrope, the system's display face.
   return (
-    <div className="min-h-screen bg-black flex flex-col">
+    <div className="min-h-dvh flex flex-col">
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
         {/* Polkadot Logo */}
         <div className="mb-8">
@@ -51,16 +53,13 @@ export default function Home() {
 
         {/* T3RMINAL Branding */}
         <div className="text-center space-y-4 mb-10">
-          <h1
-            data-testid="app-heading"
-            className="text-5xl font-bold text-white tracking-tight font-[family-name:var(--font-unbounded)]"
-          >
+          <h1 data-testid="app-heading" className="text-display-xl text-fg-primary">
             T3RMINAL
           </h1>
-          <p className="text-neutral-400 text-lg">Payment Terminal</p>
+          <p className="text-body-l text-fg-secondary">Payment Terminal</p>
         </div>
 
-        <p className="text-neutral-500 text-xs">Connecting to host…</p>
+        <p className="text-caption text-fg-tertiary">Connecting to host…</p>
       </main>
     </div>
   );

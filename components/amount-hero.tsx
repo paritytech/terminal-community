@@ -4,8 +4,9 @@
  * so both tabs render the figure at the exact same size and position, and
  * switching between them doesn't shift anything.
  *
- * text-6xl rather than 7xl so the largest keypad amount (9,999,999.99) still
- * fits on one line at phone width.
+ * The figure is `text-display-xl` in Martian Mono: the system's face for
+ * numbers, with tabular figures so the digits don't shuffle as the merchant
+ * types. Amount and symbol are a value and its unit, ranked by fg step only.
  */
 export function AmountHero({
   label,
@@ -23,17 +24,17 @@ export function AmountHero({
 }) {
   return (
     <div>
-      <p className="text-neutral-400 text-base mb-1">{label}</p>
+      <p className="text-body-l text-fg-secondary mb-1">{label}</p>
       <div className="flex items-baseline justify-between gap-4">
         <span
           data-testid={testId}
-          className={`text-white text-6xl font-bold tracking-tight break-all ${
-            dimmed ? "opacity-40" : ""
+          className={`text-display-xl font-mono text-fg-primary break-all ${
+            dimmed ? "opacity-50" : ""
           }`}
         >
           {value}
         </span>
-        <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
+        <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
       </div>
     </div>
   );

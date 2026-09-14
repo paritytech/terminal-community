@@ -6,6 +6,9 @@ import type { ReactNode } from "react";
  * empty spacer elsewhere — so the header is the same height on every tab and
  * the content below it (the big amount, the list) doesn't jump when switching
  * tabs.
+ *
+ * The title is `text-display-l` (Manrope, 32/40, semibold): the one display
+ * style a page title takes. Headings are never bold.
  */
 export function ScreenHeader({
   title,
@@ -19,10 +22,10 @@ export function ScreenHeader({
 }) {
   return (
     <header className="flex items-center justify-between px-6 py-5 shrink-0">
-      <h1 data-testid={testId} className="text-white text-3xl font-bold">
+      <h1 data-testid={testId} className="text-display-l text-fg-primary">
         {title}
       </h1>
-      {action ?? <div className="w-10 h-10 shrink-0" aria-hidden />}
+      {action ?? <div className="size-10 shrink-0" aria-hidden />}
     </header>
   );
 }

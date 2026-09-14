@@ -65,8 +65,46 @@ export async function openReports(
 }
 
 /**
+ * Wait until the product iframe has stopped reloading.
+ *
+ * After a location change the test host reloads the product frame twice,
+ * roughly 100–250 ms apart (host-bridge re-injection). The keypad renders
+ * before the last reload — the account is cached — so anything a spec typed
+ * in that window was silently wiped, which made every keypad assertion racy.
+ * We stamp the current document and only return once one document has
+ * survived untouched for `quietMs`.
+ */
+async function settleProductFrame(
+  testHost: TestHost,
+  options?: { quietMs?: number; timeout?: number },
+): Promise<void> {
+  const quietMs = options?.quietMs ?? 700;
+  const deadline = Date.now() + (options?.timeout ?? 30_000);
+  while (Date.now() < deadline) {
+    const productFrame = testHost.page.frames().find((f) => f.url().includes(PRODUCT_PORT));
+    if (!productFrame) {
+      await testHost.page.waitForTimeout(100);
+      continue;
+    }
+    const mark = `${Date.now()}`;
+    try {
+      await productFrame.evaluate((m) => {
+        document.documentElement.dataset.e2eMark = m;
+      }, mark);
+      await testHost.page.waitForTimeout(quietMs);
+      const still = await productFrame.evaluate(() => document.documentElement.dataset.e2eMark);
+      if (still === mark) return;
+    } catch {
+      // The document was replaced mid-check — loop and stamp the new one.
+    }
+  }
+  throw new Error('settleProductFrame: product frame kept reloading');
+}
+
+/**
  * Open the amount keypad (`/terminal`) — the "Check out" tab target. Navigates
- * the product iframe directly so specs don't depend on nav-tab wiring.
+ * the product iframe directly so specs don't depend on nav-tab wiring, then
+ * waits for the host's reload cycle to finish before handing back control.
  */
 export async function navigateToTerminal(
   testHost: TestHost,
@@ -81,6 +119,7 @@ export async function navigateToTerminal(
   await productFrame.evaluate(() => {
     window.location.href = '/terminal';
   });
+  await settleProductFrame(testHost, { timeout });
   await testHost
     .productFrame()
     .locator('[data-testid="terminal-header"]')

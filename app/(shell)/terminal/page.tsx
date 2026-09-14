@@ -26,6 +26,8 @@ import {
 import { useNavLock, useNavHidden } from "@/components/nav-lock";
 import { AmountHero } from "@/components/amount-hero";
 import { ScreenHeader } from "@/components/screen-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { FEATURES } from "@/lib/config/features";
 import { useAccount } from "@/lib/web3";
 import { QRCodeSVG } from "qrcode.react";
@@ -794,18 +796,19 @@ function TerminalPageInner() {
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
           <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
             <div className="text-center space-y-3 w-full">
-              <h1 className="text-2xl font-semibold text-white">Welcome</h1>
-              <p className="text-neutral-500 text-sm">Connecting to host…</p>
+              <h1 className="text-heading-l text-fg-primary">Welcome</h1>
+              <p className="text-body-m text-fg-tertiary">Connecting to host…</p>
             </div>
           </main>
-        </div>      </div>
+        </div>
+      </div>
     );
   }
 
   // Input State, items mode — the item grid is the entry screen (default
   // tab), the keypad lives one tap away as "Amount" and feeds the basket as
-  // Custom Amount lines. Charging hands the basket total to the same
-  // review → QR flow the keypad uses.
+  // Custom Amount lines. Charging hands the basket total to the same QR flow
+  // the keypad uses.
   if (terminalState === "input" && itemsMode) {
     const query = itemSearch.trim().toLowerCase();
     const filteredItems = query
@@ -825,12 +828,14 @@ function TerminalPageInner() {
       />
     );
 
+    // Error tint (bg-action-error) + error text: quiet enough to sit under the
+    // keypad the whole time the terminal is offline.
     const connectivityWarning = (!connectivity.isOnline || connectivityError) && (
       <div
         data-testid="terminal-connectivity-warning"
-        className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-center mt-3"
+        className="rounded-nested bg-action-error px-4 py-3 text-center mt-3"
       >
-        <p className="text-sm text-red-400 font-medium">
+        <p className="text-label-m text-fg-error">
           {connectivityError ?? "Offline — can't reach the network to settle a sale."}
         </p>
       </div>
@@ -839,38 +844,41 @@ function TerminalPageInner() {
     // Bottom dock, shared by both tabs and the basket: basket button with the
     // count badge + the main action. On the Amount tab a typed amount turns
     // the action into "Add to basket"; everywhere else it charges the basket.
+    // Charge is the view's one main action, so it takes the pill; "Add" is
+    // its alternative in the same slot and keeps the shape at secondary.
     const dock = (
       <div className="flex items-center gap-3 mt-4">
         <button
           data-testid="cart-button"
           onClick={() => cartCount > 0 && setBasketOpen(true)}
           aria-label="Open basket"
-          className="relative w-16 h-14 shrink-0 rounded-xl border border-neutral-700 bg-neutral-900 hover:bg-neutral-800 flex items-center justify-center transition"
+          className="relative size-14 shrink-0 rounded-full bg-action-secondary text-fg-primary hover:bg-action-secondary-hover flex items-center justify-center transition-colors"
         >
-          <ShoppingCart className="w-6 h-6 text-white" />
+          <ShoppingCart className="size-6" aria-hidden />
           {cartCount > 0 && (
-            <span className="absolute -top-1.5 -left-1.5 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+            <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full bg-action-primary text-fg-primary-inverted text-label-s flex items-center justify-center">
               {cartCount}
             </span>
           )}
         </button>
         {!basketOpen && activeTab === "amount" && hasAmount ? (
-          <button
+          <Button
+            variant="secondary"
             data-testid="items-add-custom"
             onClick={addCustomAmount}
-            className="flex-1 bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-xl transition text-lg"
+            className="flex-1 h-auto rounded-full px-6 py-3.5 text-label-l"
           >
             Add {enteredAmount} {symbol}
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             data-testid="items-charge"
             onClick={handleChargeCart}
             disabled={cartCount === 0}
-            className="flex-1 bg-white hover:bg-neutral-100 disabled:bg-neutral-800 disabled:text-neutral-500 text-black font-semibold py-4 rounded-xl transition text-lg"
+            className="flex-1 h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
           >
             Charge {cartTotalDecimal} {symbol}
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -884,23 +892,26 @@ function TerminalPageInner() {
               <header className="flex items-center justify-between px-4 py-4 shrink-0">
                 <button
                   onClick={() => setBasketOpen(false)}
-                  className="p-2"
+                  className="p-2 rounded-full text-fg-primary hover:bg-action-tertiary-hover transition-colors"
                   aria-label="Close basket"
                 >
-                  <ChevronDown className="w-6 h-6 text-white" />
+                  <ChevronDown className="size-6" />
                 </button>
-                <button
+                <Button
+                  variant="secondary"
                   onClick={() => setClearCartConfirm(true)}
-                  className="px-4 py-2 rounded-full border border-neutral-700 text-white text-sm font-medium hover:bg-neutral-900 transition"
+                  className="text-label-m"
                 >
                   Clear cart
-                </button>
+                </Button>
               </header>
 
               <main className="flex-1 min-h-0 overflow-y-auto px-6 pb-4 flex flex-col">
-                <div className="flex justify-between items-baseline py-3 border-b border-neutral-800 shrink-0">
-                  <span className="text-neutral-400 text-lg">Total</span>
-                  <span className="text-white text-lg font-bold">
+                {/* Rows of paired values: one style per row, the value ranked
+                    by its mono face and fg step — never by size or weight. */}
+                <div className="flex justify-between items-baseline py-3 border-b shrink-0">
+                  <span className="text-body-l text-fg-secondary">Total</span>
+                  <span className="text-body-l font-mono text-fg-primary">
                     {cartTotalDecimal} {symbol}
                   </span>
                 </div>
@@ -908,23 +919,23 @@ function TerminalPageInner() {
                 {cart.map((line) => (
                   <div
                     key={line.id}
-                    className="flex items-start justify-between gap-3 py-4 border-b border-neutral-800"
+                    className="flex items-start justify-between gap-3 py-4 border-b"
                   >
                     <div className="flex items-start gap-3 min-w-0">
-                      <span className="w-6 h-6 rounded-full bg-neutral-800 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                      <span className="size-6 rounded-full bg-action-primary text-fg-primary-inverted text-label-s flex items-center justify-center shrink-0 mt-0.5">
                         {line.quantity}
                       </span>
                       <div className="min-w-0">
-                        <p className="text-white font-medium break-words">{line.name}</p>
+                        <p className="text-label-l text-fg-primary break-words">{line.name}</p>
                         {line.quantity > 1 && (
-                          <p className="text-neutral-500 text-sm mt-0.5">
+                          <p className="text-body-m font-mono text-fg-tertiary mt-0.5">
                             {tilePrice(line.pricePlanks)} {symbol}
                           </p>
                         )}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2 shrink-0">
-                      <span className="text-white font-semibold">
+                      <span className="text-label-l font-mono text-fg-primary">
                         {formatAmountFromPlanck(
                           (line.pricePlanks * BigInt(line.quantity)).toString(),
                           PUSD_DECIMALS,
@@ -935,16 +946,16 @@ function TerminalPageInner() {
                         <button
                           onClick={() => changeCartQuantity(line.id, 1)}
                           aria-label={`Add one ${line.name}`}
-                          className="w-9 h-9 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center transition"
+                          className="size-9 rounded-full bg-action-tertiary text-fg-primary hover:bg-action-tertiary-hover flex items-center justify-center transition-colors"
                         >
-                          <Plus className="w-4 h-4 text-white" />
+                          <Plus className="size-4" />
                         </button>
                         <button
                           onClick={() => changeCartQuantity(line.id, -1)}
                           aria-label={`Remove one ${line.name}`}
-                          className="w-9 h-9 rounded-full bg-neutral-800 hover:bg-neutral-700 flex items-center justify-center transition"
+                          className="size-9 rounded-full bg-action-tertiary text-fg-primary hover:bg-action-tertiary-hover flex items-center justify-center transition-colors"
                         >
-                          <Minus className="w-4 h-4 text-white" />
+                          <Minus className="size-4" />
                         </button>
                       </div>
                     </div>
@@ -963,16 +974,22 @@ function TerminalPageInner() {
               <header className="px-6 h-20 flex items-center gap-4 shrink-0">
                 <button
                   onClick={() => setActiveTab("amount")}
-                  className={`text-3xl font-bold transition-colors ${
-                    activeTab === "amount" ? "text-white" : "text-neutral-500"
+                  aria-current={activeTab === "amount" ? "page" : undefined}
+                  className={`text-display-l transition-colors ${
+                    activeTab === "amount"
+                      ? "text-fg-primary"
+                      : "text-fg-tertiary hover:text-fg-secondary-hover"
                   }`}
                 >
                   Amount
                 </button>
                 <button
                   onClick={() => setActiveTab("items")}
-                  className={`text-3xl font-bold transition-colors ${
-                    activeTab === "items" ? "text-white" : "text-neutral-500"
+                  aria-current={activeTab === "items" ? "page" : undefined}
+                  className={`text-display-l transition-colors ${
+                    activeTab === "items"
+                      ? "text-fg-primary"
+                      : "text-fg-tertiary hover:text-fg-secondary-hover"
                   }`}
                 >
                   Items
@@ -982,32 +999,37 @@ function TerminalPageInner() {
               {activeTab === "items" ? (
                 /* ——— Item grid ——— */
                 <main className="flex-1 min-h-0 flex flex-col px-6 pb-4">
-                  <h2 className="text-white text-lg font-semibold mb-3 shrink-0">
+                  <h2 className="text-heading-l text-fg-primary mb-3 shrink-0">
                     All Items
                   </h2>
-                  <div className="shrink-0 mb-2">
-                    <div className="flex items-center gap-2 bg-neutral-900 rounded-full px-4 py-2.5">
-                      <Search className="w-4 h-4 text-neutral-500 shrink-0" />
-                      <input
-                        value={itemSearch}
-                        onChange={(e) => setItemSearch(e.target.value)}
-                        placeholder="Search items"
-                        className="w-full bg-transparent text-white text-sm outline-none placeholder:text-neutral-500"
-                      />
-                    </div>
+                  <div className="relative shrink-0 mb-2">
+                    <Search
+                      className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-fg-tertiary"
+                      aria-hidden
+                    />
+                    <Input
+                      value={itemSearch}
+                      onChange={(e) => setItemSearch(e.target.value)}
+                      placeholder="Search items"
+                      aria-label="Search items"
+                      className="h-11 rounded-full pl-10"
+                    />
                   </div>
 
                   <div className="flex-1 min-h-0 overflow-y-auto pt-3 -mx-1 px-1">
                     {checkoutItems.items.length === 0 ? (
-                      <p className="text-neutral-500 text-sm text-center py-10">
+                      <p className="text-body-m text-fg-tertiary text-center py-10">
                         No items yet — add them in{" "}
-                        <Link href="/settings/items" className="text-white underline">
+                        <Link
+                          href="/settings/items"
+                          className="text-fg-link hover:text-fg-link-hover underline transition-colors"
+                        >
                           Settings → Show Items in Checkout
                         </Link>
                         , or use the Amount tab.
                       </p>
                     ) : filteredItems.length === 0 ? (
-                      <p className="text-neutral-500 text-sm text-center py-10">
+                      <p className="text-body-m text-fg-tertiary text-center py-10">
                         No items match your search.
                       </p>
                     ) : (
@@ -1015,20 +1037,22 @@ function TerminalPageInner() {
                         {filteredItems.map((item) => {
                           const qty = qtyInCart(item.id);
                           return (
+                            /* A tile is a button (tap adds to the basket), so it
+                               wears the quiet action surface — no outline. */
                             <button
                               key={item.id}
                               onClick={() => addCatalogItem(item)}
-                              className="relative rounded-xl bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 p-3 min-h-26 flex flex-col justify-between items-start text-left transition active:scale-95"
+                              className="relative rounded-nested bg-action-tertiary hover:bg-action-tertiary-hover active:bg-action-active p-3 min-h-26 flex flex-col justify-between items-start text-left transition active:scale-95"
                             >
                               {qty > 0 && (
-                                <span className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-white text-black text-xs font-bold flex items-center justify-center">
+                                <span className="absolute -top-2 -left-2 size-6 rounded-full bg-action-primary text-fg-primary-inverted text-label-s flex items-center justify-center">
                                   {qty}
                                 </span>
                               )}
-                              <span className="text-white text-[13px] font-semibold leading-tight break-words">
+                              <span className="text-label-m text-fg-primary break-words">
                                 {item.name}
                               </span>
-                              <span className="text-neutral-400 text-xs mt-3">
+                              <span className="text-body-s font-mono text-fg-secondary mt-3">
                                 {tilePrice(amountToPlanck(item.price, PUSD_DECIMALS))} {symbol}
                               </span>
                             </button>
@@ -1064,34 +1088,38 @@ function TerminalPageInner() {
           )}
         </div>
 
-        {/* Clear-cart confirmation sheet */}
+        {/* Clear-cart confirmation sheet. NOTE: the design system bans
+            "are you sure?" confirmations in favour of act-then-undo; this one
+            is only restyled here and is flagged for that redesign. */}
         {clearCartConfirm && (
           <div
-            className="fixed inset-0 z-50 bg-black/70 flex items-end justify-center px-3 pb-3"
+            className="fixed inset-0 z-50 bg-surface-overlay flex items-end justify-center px-3 pb-3"
             onClick={() => setClearCartConfirm(false)}
           >
             <div
-              className="w-full max-w-md bg-neutral-900 rounded-3xl p-6"
+              className="w-full max-w-md bg-surface-container rounded-container shadow-3 p-6"
               onClick={(e) => e.stopPropagation()}
             >
-              <p className="text-white text-xl font-semibold text-center mb-6">
+              <p className="text-heading-l text-fg-primary text-center mb-6">
                 All {cartCount} item{cartCount === 1 ? "" : "s"} will be removed.
                 <br />
                 This can&apos;t be undone
               </p>
               <div className="flex gap-3">
-                <button
+                <Button
+                  variant="secondary"
                   onClick={() => setClearCartConfirm(false)}
-                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-white font-semibold py-4 rounded-2xl transition"
+                  className="flex-1 h-auto py-3.5 text-label-m"
                 >
                   Keep cart
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="destructive"
                   onClick={clearCart}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-4 rounded-2xl transition"
+                  className="flex-1 h-auto py-3.5 text-label-m text-fg-static-white"
                 >
                   Clear all
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -1137,24 +1165,26 @@ function TerminalPageInner() {
               {(!connectivity.isOnline || connectivityError) && (
                 <div
                   data-testid="terminal-connectivity-warning"
-                  className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-center mt-2"
+                  className="rounded-nested bg-action-error px-4 py-3 text-center mt-2"
                 >
-                  <p className="text-sm text-red-400 font-medium">
+                  <p className="text-label-m text-fg-error">
                     {connectivityError ??
                       "Offline — can't reach the network to settle a sale."}
                   </p>
                 </div>
               )}
 
-              {/* Charge */}
-              <button
+              {/* Charge — the view's one main action: the primary pill, full
+                  width because it is the bottom-anchored commitment of the
+                  screen. Disabled state is the surface, not a fade. */}
+              <Button
                 data-testid="btn-charge"
                 onClick={handleCharge}
                 disabled={!hasAmount}
-                className="w-full bg-white hover:bg-neutral-100 disabled:bg-neutral-800 disabled:text-neutral-500 text-black font-semibold py-4 rounded-xl transition text-lg mt-4"
+                className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold mt-4 disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
               >
                 Charge {enteredAmount} {symbol}
-              </button>
+              </Button>
             </div>
           </main>
         </div>
@@ -1173,8 +1203,10 @@ function TerminalPageInner() {
       useCoins &&
       (coinage.status === "claiming" || coinage.status === "paid");
     const canCancelTransaction = !paymentIncoming && !partial && !paymentReceived;
-    // Amber banner while the QR is being armed (connectivity pre-flight or
-    // deeplink still computing); blue once it's scannable.
+    // Warning fill while the QR is being armed (connectivity pre-flight or
+    // deeplink still computing); the inverted container surface once it's
+    // scannable. There is no informational status token — the old brand-blue
+    // "waiting" banner is reported as a gap.
     const generating = isGenerating || !displayQrValue;
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1182,20 +1214,22 @@ function TerminalPageInner() {
           {/* Status banner — the colored card doubles as the screen header
               and takes the top ~2/5 of the screen, per the design. The host
               already shows a close button; "Cancel Transaction" below covers
-              the same intent. */}
+              the same intent. Status fills are theme-invariant, so the text on
+              the warning fill is static white; the inverted surface takes the
+              inverted fg. */}
           <div
             className={`basis-[30%] grow-0 shrink-0 px-6 pb-8 flex flex-col items-center justify-center gap-3 transition-colors ${
-              generating ? "bg-amber-500" : "bg-[#4353ff]"
+              generating
+                ? "bg-status-warning text-fg-static-white"
+                : "bg-surface-container-inverted text-fg-primary-inverted"
             }`}
           >
-            <div className="w-14 h-14 rounded-full border-2 border-white/80 flex items-center justify-center">
-              {generating ? (
-                <Hourglass className="w-7 h-7 text-white" />
-              ) : (
-                <Radio className="w-7 h-7 text-white" />
-              )}
-            </div>
-            <h2 data-testid="waiting-text" className="text-white text-2xl font-semibold text-center">
+            {generating ? (
+              <Hourglass className="size-6" aria-hidden />
+            ) : (
+              <Radio className="size-6" aria-hidden />
+            )}
+            <h2 data-testid="waiting-text" className="text-display-l text-center">
               {generating
                 ? "Generating Payment"
                 : paymentIncoming
@@ -1210,17 +1244,17 @@ function TerminalPageInner() {
 
           {/* Details card — slightly lighter panel whose rounded top overlaps
               the colored banner, per the design's two-tone layout. */}
-          <main className="flex-1 min-h-0 overflow-y-auto px-6 flex flex-col bg-neutral-900 rounded-t-3xl -mt-6">
+          <main className="flex-1 min-h-0 overflow-y-auto px-6 flex flex-col bg-surface-container rounded-t-container -mt-6">
             <div className="w-full pt-4 shrink-0">
-              <p className="text-neutral-400 text-sm mb-0.5">Receiving Amount</p>
+              <p className="text-body-m text-fg-secondary mb-0.5">Receiving Amount</p>
               <div className="flex items-baseline justify-between gap-4">
                 <span
                   data-testid="qr-amount"
-                  className="text-white text-4xl font-bold tracking-tight break-all"
+                  className="text-display-l font-mono text-fg-primary break-all"
                 >
                   {finalAmount || enteredAmount}
                 </span>
-                <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
+                <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
               </div>
             </div>
 
@@ -1228,88 +1262,94 @@ function TerminalPageInner() {
                 the bottom — matches the design's lower QR placement. */}
             <div className="flex-1 flex flex-col items-center justify-center w-full py-2">
               {/* Multi-group offboard in progress: part of the total has landed,
-                  we're still waiting for the remaining recycler groups. */}
+                  we're still waiting for the remaining recycler groups. A
+                  nested-surface chip with warning text and a warning dot —
+                  there is no warning tint token (reported as a gap). */}
               {partial && (
                 <div
                   data-testid="partial-progress"
-                  className="-mt-2 mb-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/40"
+                  className="-mt-2 mb-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-nested"
                 >
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="text-amber-300 text-sm font-medium">
+                  <span className="size-2 rounded-full bg-status-warning animate-pulse" />
+                  <span className="text-label-m text-fg-warning">
                     Received {formatAmountFromPlanck(partial.received, PUSD_DECIMALS)} of{" "}
                     {formatAmountFromPlanck(partial.requested, PUSD_DECIMALS)} {symbol} — waiting…
                   </span>
                 </div>
               )}
 
-              {/* QR Code — dark outlined placeholder while generating (or once
-                  a payment starts arriving), white card when scannable. */}
+              {/* QR Code — a nested-surface placeholder while generating (or
+                  once a payment starts arriving). The QR paints its own white
+                  quiet zone (marginSize) so it scans on every theme without
+                  the card needing a white fill. */}
               <div
                 data-testid="qr-code"
-                className={`rounded-3xl ${
-                  paymentIncoming || !displayQrValue
-                    ? "border border-neutral-700"
-                    : "bg-white p-4"
-                }`}
+                className="rounded-container overflow-hidden bg-surface-nested"
               >
                 {paymentIncoming ? (
-                  <div className="w-[240px] h-[240px] flex items-center justify-center">
-                    <Loader2 className="w-10 h-10 animate-spin text-neutral-300" />
+                  <div className="size-68 flex items-center justify-center">
+                    <Loader2 className="size-6 animate-spin text-fg-secondary" />
                   </div>
                 ) : displayQrValue ? (
-                  <QRCodeSVG value={displayQrValue} size={240} level="H" />
+                  <QRCodeSVG value={displayQrValue} size={272} level="H" marginSize={2} />
                 ) : (
-                  <div className="w-[240px] h-[240px] flex items-center justify-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-neutral-400" />
+                  <div className="size-68 flex items-center justify-center">
+                    <Loader2 className="size-6 animate-spin text-fg-secondary" />
                   </div>
                 )}
               </div>
 
               {useCoins && coinage.status === "error" && coinage.error && (
-                <p className="text-neutral-500 text-xs mb-4 text-center max-w-xs">
+                <p className="text-body-s text-fg-error mt-4 text-center max-w-xs">
                   {coinage.error}
                 </p>
               )}
             </div>
 
-            {/* Cancel pinned to the bottom; red label while still generating */}
+            {/* Cancel pinned to the bottom; error-coloured label while still
+                generating. A secondary button — the screen's main action is
+                the customer's scan, not this. */}
             {canCancelTransaction && (
               <div className="shrink-0 pb-5">
-                <button
+                <Button
+                  variant="secondary"
                   onClick={() => setShowCancelModal(true)}
-                  className={`w-full bg-neutral-800 hover:bg-neutral-700 font-medium py-3.5 rounded-xl transition ${
-                    generating ? "text-red-500" : "text-white"
-                  }`}
+                  className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
                 >
                   Cancel Transaction
-                </button>
+                </Button>
               </div>
             )}
           </main>
         </div>
 
-        {/* Cancel Modal */}
+        {/* Cancel Modal. NOTE: the design system bans "are you sure?"
+            confirmations in favour of act-then-undo; this one is only
+            restyled here and is flagged for that redesign. */}
         {showCancelModal && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 px-6">
-            <div className="bg-neutral-900 rounded-2xl w-full max-w-sm p-6">
-              <div className="flex flex-col items-center mb-6">
-                <p className="text-white text-lg font-medium text-center">Do you want to cancel</p>
-                <p className="text-white text-lg font-medium text-center">this transaction?</p>
-              </div>
+          <div className="fixed inset-0 bg-surface-overlay flex items-center justify-center z-50 px-6">
+            <div className="bg-surface-container rounded-container shadow-3 w-full max-w-sm p-6">
+              <p className="text-heading-l text-fg-primary text-center mb-6">
+                Do you want to cancel
+                <br />
+                this transaction?
+              </p>
 
               <div className="flex gap-3">
-                <button
+                <Button
+                  variant="secondary"
                   onClick={() => setShowCancelModal(false)}
-                  className="flex-1 bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-4 rounded-xl transition"
+                  className="flex-1 h-auto py-3.5 text-label-m"
                 >
                   Close
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="destructive"
                   onClick={handleCancelTransaction}
-                  className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-4 rounded-xl transition"
+                  className="flex-1 h-auto py-3.5 text-label-m text-fg-static-white"
                 >
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -1325,37 +1365,43 @@ function TerminalPageInner() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
           {/* Success zone — same top ~2/5 of the screen as the QR banner. A
-              green disc bursts out of the check badge until the whole zone is
-              green (see .success-burst in globals.css); overflow-hidden clips
-              the disc to this zone, the details card below stays dark. */}
+              success-coloured disc bursts out of the check badge until the
+              whole zone is filled (see .success-burst in globals.css);
+              overflow-hidden clips the disc to this zone, the details card
+              below keeps its container surface. */}
           <div className="relative overflow-hidden basis-[40%] grow-0 shrink-0 flex flex-col">
             <div
               aria-hidden
-              className="success-burst absolute left-1/2 top-1/2 w-[1200px] h-[1200px] rounded-full bg-green-500 pointer-events-none"
+              className="success-burst absolute left-1/2 top-1/2 size-[1200px] rounded-full bg-status-success pointer-events-none"
             />
 
             <div className="relative flex-1 flex flex-col">
               {/* Header */}
               <header className="flex items-center px-4 py-4 shrink-0">
-                <button onClick={handleReset} className="p-2" aria-label="New sale">
-                  <ArrowLeft className="w-6 h-6 text-white" />
+                <button
+                  onClick={handleReset}
+                  className="p-2 rounded-full text-fg-primary hover:bg-action-tertiary-hover transition-colors"
+                  aria-label="New sale"
+                >
+                  <ArrowLeft className="size-6" />
                 </button>
               </header>
 
               <div className="flex-1 flex flex-col items-center justify-center pb-8">
-                <div className="success-badge w-16 h-16 rounded-full bg-green-500 text-white flex items-center justify-center mb-4">
-                  <Check className="w-8 h-8" strokeWidth={3} />
+                <div className="success-badge size-16 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-4">
+                  <Check className="size-6" strokeWidth={3} />
                 </div>
-                <h2 data-testid="payment-completed" className="text-white text-2xl font-semibold">
+                <h2 data-testid="payment-completed" className="text-display-l text-fg-primary">
                   Payment received
                 </h2>
               </div>
             </div>
           </div>
 
-          {/* Details card — slightly lighter panel whose rounded top overlaps
-              the success zone (black, then green once the burst lands) */}
-          <main className="flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pb-6 pt-8 bg-neutral-900 rounded-t-3xl -mt-6 relative">
+          {/* Details card — container surface whose rounded top overlaps the
+              success zone (page surface, then success fill once the burst
+              lands) */}
+          <main className="flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pb-6 pt-8 bg-surface-container rounded-t-container -mt-6 relative">
 
             {/* No finality indicator here — best-block is the merchant-side
                 terminal state. GRANDPA finalization is stamped on the sale
@@ -1364,12 +1410,12 @@ function TerminalPageInner() {
 
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
-              <span className="text-white text-6xl font-bold tracking-tight break-all">
+              <span className="text-display-xl font-mono text-fg-primary break-all">
                 {finalAmount}
               </span>
-              <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
+              <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
             </div>
-            <p className="text-neutral-400 text-sm mb-6">
+            <p className="text-body-m text-fg-secondary mb-6">
               Order <span data-testid="sale-id" className="font-mono">#{saleId?.slice(-4) || "----"}</span>
               {" · "}
               {now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
@@ -1379,74 +1425,80 @@ function TerminalPageInner() {
 
             {/* Receipt note typed on the amount screen */}
             {note.trim() && (
-              <div className="flex items-center gap-3 py-3 text-white">
-                <StickyNote className="w-5 h-5 text-neutral-400 shrink-0" />
-                <span className="text-sm">{note.trim()}</span>
+              <div className="flex items-center gap-3 py-3 text-fg-primary">
+                <StickyNote className="size-5 text-fg-secondary shrink-0" aria-hidden />
+                <span className="text-body-m">{note.trim()}</span>
               </div>
             )}
 
             <div className="flex-1" />
 
-            {/* Secondary actions */}
-            <div className="mb-4">
+            {/* Secondary actions — a list of rows on the container surface, so
+                the row owns the hover (selection token) and the destructive
+                one stays quiet at rest. */}
+            <div className="mb-4 -mx-2">
               <button
                 onClick={() => setTerminalState("receipt")}
-                className="w-full flex items-center gap-3 py-3 text-white hover:text-neutral-300 transition"
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-selection-container-hover transition-colors"
               >
-                <ReceiptText className="w-5 h-5" />
-                <span className="font-medium">Review Receipt</span>
+                <ReceiptText className="size-5" aria-hidden />
+                <span>Review Receipt</span>
               </button>
               {printerAvailable && (
                 <button
                   onClick={handlePrintReceipt}
                   disabled={isPrintingReceipt}
-                  className="w-full flex items-center gap-3 py-3 text-white hover:text-neutral-300 transition disabled:opacity-50"
+                  className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-selection-container-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 >
                   {isPrintingReceipt ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <Loader2 className="size-5 animate-spin" aria-hidden />
                   ) : (
-                    <Printer className="w-5 h-5" />
+                    <Printer className="size-5" aria-hidden />
                   )}
-                  <span className="font-medium">Print Receipt</span>
+                  <span>Print Receipt</span>
                 </button>
               )}
               <button
                 onClick={() =>
                   setPrintMessage({ tone: "error", text: "Refunds aren't available yet." })
                 }
-                className="w-full flex items-center gap-3 py-3 text-red-500 hover:text-red-400 transition"
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-error hover:bg-action-error transition-colors"
               >
-                <Undo2 className="w-5 h-5" />
-                <span className="font-medium">Refund</span>
+                <Undo2 className="size-5" aria-hidden />
+                <span>Refund</span>
               </button>
             </div>
 
+            {/* Feedback line. Success has no tint token — the nested surface
+                carries success-coloured text; error takes the error tint. */}
             {printMessage && (
-              <div className={`rounded-lg border px-3 py-2 text-xs mb-4 ${
+              <div className={`rounded-nested px-3 py-2 text-body-s mb-4 ${
                 printMessage.tone === "success"
-                  ? "bg-green-900/30 border-green-800 text-green-400"
-                  : "bg-red-900/30 border-red-800 text-red-400"
+                  ? "bg-surface-nested text-fg-success"
+                  : "bg-action-error text-fg-error"
               }`}>
                 {printMessage.text}
               </div>
             )}
 
-            {/* Done + share-QR */}
+            {/* Done (the view's main action, pill) + share-QR (a circular icon
+                button, exempt from the pill count) */}
             <div className="flex gap-3">
-              <button
+              <Button
                 data-testid="btn-done"
                 onClick={handleReset}
-                className="flex-1 bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-xl transition"
+                className="flex-1 h-auto rounded-full px-6 py-3.5 text-label-l font-semibold"
               >
                 Done
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => setTerminalState("share")}
                 aria-label="Share receipt QR"
-                className="w-14 rounded-xl bg-neutral-800 border border-neutral-700 hover:bg-neutral-700 flex items-center justify-center transition"
+                className="size-14 rounded-full p-0"
               >
-                <QrCode className="w-6 h-6 text-white" />
-              </button>
+                <QrCode className="size-6" />
+              </Button>
             </div>
           </main>
         </div>
@@ -1490,46 +1542,48 @@ function TerminalPageInner() {
           <header className="flex items-center justify-between px-4 py-4">
             <button
               onClick={() => setTerminalState("completed")}
-              className="p-2"
+              className="p-2 rounded-full text-fg-primary hover:bg-action-tertiary-hover transition-colors"
               aria-label="Back to payment"
             >
-              <ArrowLeft className="w-6 h-6 text-white" />
+              <ArrowLeft className="size-6" />
             </button>
-            <span className="text-white text-lg font-semibold">Share Receipt</span>
-            <div className="w-10" />
+            <span className="text-heading-l text-fg-primary">Share Receipt</span>
+            <div className="size-10" aria-hidden />
           </header>
 
           {/* Main Content */}
           <main className="flex-1 flex flex-col items-center px-6 pb-6">
-            <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center mt-4 mb-5">
-              <ReceiptText className="w-8 h-8 text-black" />
+            <div className="size-16 rounded-full bg-illustration-dark text-fg-primary-inverted flex items-center justify-center mt-4 mb-5">
+              <ReceiptText className="size-6" aria-hidden />
             </div>
-            <h2 className="text-white text-3xl font-bold text-center leading-tight mb-2">
+            <h2 className="text-display-l text-fg-primary text-center mb-2">
               Scan QR
               <br />
               to Receive Receipt
             </h2>
-            <p className="text-neutral-400 text-base mb-8">
+            <p className="text-body-l text-fg-secondary mb-8">
               Payment Receipt: Order #{saleId?.slice(-4)}
             </p>
 
-            {/* QR Code */}
-            <div className="bg-white rounded-3xl p-6 mb-8">
+            {/* QR Code — paints its own white quiet zone, so no white card */}
+            <div className="rounded-container overflow-hidden mb-8">
               <QRCodeSVG
                 value={shareQrValue}
-                size={260}
+                size={300}
                 level="L"
+                marginSize={2}
               />
             </div>
 
             <div className="flex-1" />
 
-            <button
+            <Button
+              variant="secondary"
               onClick={() => setTerminalState("completed")}
-              className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-4 rounded-xl transition"
+              className="w-full h-auto py-3.5 text-label-m"
             >
               Back
-            </button>
+            </Button>
           </main>
         </div>
       </div>
@@ -1543,55 +1597,68 @@ function TerminalPageInner() {
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
           {/* Header */}
           <header className="flex items-center justify-between px-4 py-4">
-            <button onClick={() => setTerminalState("completed")} className="p-2">
-              <X className="w-6 h-6 text-white" />
+            <button
+              onClick={() => setTerminalState("completed")}
+              className="p-2 rounded-full text-fg-primary hover:bg-action-tertiary-hover transition-colors"
+              aria-label="Close receipt"
+            >
+              <X className="size-6" />
             </button>
-            <span className="text-white font-medium">Payment Record #{saleId?.slice(-4)}</span>
-            <button onClick={handleDownloadReceipt} className="p-2" aria-label="Download receipt">
-              <Download className="w-6 h-6 text-white" />
+            <span className="text-label-l text-fg-primary">Payment Record #{saleId?.slice(-4)}</span>
+            <button
+              onClick={handleDownloadReceipt}
+              className="p-2 rounded-full text-fg-primary hover:bg-action-tertiary-hover transition-colors"
+              aria-label="Download receipt"
+            >
+              <Download className="size-6" />
             </button>
           </header>
 
           {/* Receipt Content */}
           <main className="flex-1 flex flex-col px-6 py-4 overflow-auto">
             {svgReceipt ? (
-              <div className="bg-white rounded-xl p-4 overflow-hidden">
+              /* The generated receipt SVG is the printed document: it paints
+                 its own paper (a white rect) and ink, so it needs no surface
+                 from the theme — only rounded corners to clip to. */
+              <div className="rounded-nested overflow-hidden">
                 <div dangerouslySetInnerHTML={{ __html: svgReceipt }} />
               </div>
             ) : (
-              <div className="bg-white rounded-xl p-6">
-                <div className="border-b border-neutral-200 pb-4 mb-4">
+              /* HTML fallback (no SVG yet): a normal themed container. Rows of
+                 paired values take one style per row, ranked by fg step/face. */
+              <div className="bg-surface-container rounded-nested p-6">
+                <div className="border-b pb-4 mb-4">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h3 className="font-bold text-black">PAYMENT RECEIPT</h3>
+                      <h3 className="text-heading-m text-fg-primary">PAYMENT RECEIPT</h3>
                       {paymentReceived?.blockNumber ? (
-                        <p className="text-xs text-neutral-500">Block: {paymentReceived.blockNumber}</p>
+                        <p className="text-body-s text-fg-secondary">Block: {paymentReceived.blockNumber}</p>
                       ) : null}
                     </div>
-                    <span className="text-sm text-neutral-500">#{saleId?.slice(-4)}</span>
+                    <span className="text-body-m font-mono text-fg-secondary">#{saleId?.slice(-4)}</span>
                   </div>
                 </div>
 
-                <div className="space-y-3 text-sm">
+                <div className="space-y-3 text-body-m">
                   <div className="flex justify-between">
-                    <span className="text-neutral-500">TRANSACTION ID</span>
-                    <span className="text-black font-mono">{saleId?.slice(-4)}</span>
+                    <span className="text-fg-secondary">TRANSACTION ID</span>
+                    <span className="text-fg-primary font-mono">{saleId?.slice(-4)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-neutral-500">DATE</span>
-                    <span className="text-black">{new Date().toLocaleDateString()}</span>
+                    <span className="text-fg-secondary">DATE</span>
+                    <span className="text-fg-primary">{new Date().toLocaleDateString()}</span>
                   </div>
                   <div>
-                    <span className="text-neutral-500">FROM:</span>
-                    <p className="text-black font-mono text-xs break-all">{paymentReceived?.from}</p>
+                    <span className="text-fg-secondary">FROM:</span>
+                    <p className="text-fg-primary font-mono text-body-s break-all">{paymentReceived?.from}</p>
                   </div>
                   <div>
-                    <span className="text-neutral-500">TO:</span>
-                    <p className="text-black font-mono text-xs break-all">{account?.address}</p>
+                    <span className="text-fg-secondary">TO:</span>
+                    <p className="text-fg-primary font-mono text-body-s break-all">{account?.address}</p>
                   </div>
-                  <div className="flex justify-between pt-4 border-t border-neutral-200">
-                    <span className="text-neutral-500">TOTAL</span>
-                    <span className="text-black text-xl font-semibold">{finalAmount} {symbol}</span>
+                  <div className="flex justify-between pt-4 border-t">
+                    <span className="text-fg-secondary">TOTAL</span>
+                    <span className="text-fg-primary font-mono">{finalAmount} {symbol}</span>
                   </div>
                 </div>
               </div>
@@ -1625,30 +1692,37 @@ function NoteField({
   onOpenChange: (open: boolean) => void;
 }) {
   if (!open) {
+    // A ghost action: no surface, label style, tertiary hover.
     return (
       <button
         type="button"
         data-testid="btn-add-note"
         onClick={() => onOpenChange(true)}
-        className="inline-flex items-center gap-2 text-neutral-400 hover:text-white text-sm font-medium transition py-1"
+        className="inline-flex items-center gap-2 rounded-medium px-2 -mx-2 py-1 text-label-m text-fg-secondary hover:bg-action-tertiary-hover hover:text-fg-primary transition-colors"
       >
-        <StickyNote className="w-4 h-4" />
+        <StickyNote className="size-4" aria-hidden />
         Add note
       </button>
     );
   }
+  // The field is shadcn's Input (a control draws its own hairline); the icon
+  // and the clear button float inside its padding.
   return (
     <div>
-      <label className="flex items-center gap-3 rounded-xl border border-neutral-800 bg-neutral-950 px-4 py-3">
-        <StickyNote className="w-5 h-5 text-neutral-500 shrink-0" />
-        <input
+      <div className="relative">
+        <StickyNote
+          className="pointer-events-none absolute left-3 top-1/2 size-5 -translate-y-1/2 text-fg-tertiary"
+          aria-hidden
+        />
+        <Input
           data-testid="sale-note"
           autoFocus
           value={value}
           onChange={(e) => onChange(e.target.value)}
           maxLength={80}
           placeholder="e.g. Amazon Gift Card"
-          className="w-full bg-transparent text-white text-base outline-none placeholder:text-neutral-600"
+          aria-label="Receipt note"
+          className="h-12 pl-11 pr-11"
         />
         <button
           type="button"
@@ -1657,15 +1731,23 @@ function NoteField({
             onChange("");
             onOpenChange(false);
           }}
-          className="p-1 -mr-1 text-neutral-500 hover:text-white transition shrink-0"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-fg-tertiary hover:bg-action-tertiary-hover hover:text-fg-primary transition-colors"
         >
-          <X className="w-4 h-4" />
+          <X className="size-4" />
         </button>
-      </label>
-      <p className="text-neutral-500 text-xs mt-1.5">Only visible on your receipt</p>
+      </div>
+      <p className="text-caption text-fg-tertiary mt-1.5">Only visible on your receipt</p>
     </div>
   );
 }
+
+/**
+ * One keypad key. Quiet action surface, the display style in Martian Mono so
+ * the digits are big and tabular. There is no 24px step in the type scale
+ * (the old size): display-l (32/40) is the nearest; reported as a gap.
+ */
+const KEYPAD_KEY =
+  "rounded-medium bg-action-tertiary text-fg-primary text-display-l font-mono font-medium py-4 hover:bg-action-tertiary-hover active:bg-action-active transition-colors";
 
 /** The POS digit pad — shared by the plain keypad screen and the items-mode
     Amount tab so the two never drift apart (testids included). */
@@ -1683,7 +1765,7 @@ function KeypadGrid({
           key={key}
           data-testid={`calc-digit-${key}`}
           onClick={() => onDigit(key)}
-          className="bg-neutral-800 hover:bg-neutral-700 text-white text-2xl font-medium py-5 rounded-2xl transition"
+          className={KEYPAD_KEY}
         >
           {key}
         </button>
@@ -1691,23 +1773,23 @@ function KeypadGrid({
       <button
         data-testid="calc-digit-00"
         onClick={() => onDigit("00")}
-        className="bg-neutral-800 hover:bg-neutral-700 text-white text-2xl font-medium py-5 rounded-2xl transition"
+        className={KEYPAD_KEY}
       >
         00
       </button>
       <button
         data-testid="calc-digit-0"
         onClick={() => onDigit("0")}
-        className="bg-neutral-800 hover:bg-neutral-700 text-white text-2xl font-medium py-5 rounded-2xl transition"
+        className={KEYPAD_KEY}
       >
         0
       </button>
       <button
         data-testid="calc-backspace"
         onClick={onBackspace}
-        className="bg-neutral-800 hover:bg-neutral-700 text-white text-2xl font-medium py-5 rounded-2xl transition flex items-center justify-center"
+        className={`${KEYPAD_KEY} flex items-center justify-center`}
       >
-        <Delete className="w-6 h-6" />
+        <Delete className="size-6" aria-hidden />
       </button>
     </div>
   );

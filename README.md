@@ -25,6 +25,35 @@ npm run test:e2e     # playwright
 Copy [.env.example](.env.example) to `.env.local` and fill in the values before
 running against a live chain.
 
+## Design system
+
+Screens use the Polkadot design system: the theme bundle lives in `theme/`
+(copied from the `polkadot-design-system` skill; only `theme/base.css` and
+`theme/theme.ts` are meant to be edited by hand) and is imported once from
+`app/globals.css`. App code writes semantic tokens only — `text-fg-*`,
+`bg-surface-*` / `bg-action-*` / `bg-status-*`, `border-stroke-*`,
+`rounded-container|nested|medium|small`, `shadow-1|2|3` and the fourteen named
+type styles (`text-display-l`, `text-label-m`, `text-body-m`, …). Stock
+Tailwind colours, radii and weights are removed by the bundle. shadcn
+components in `components/ui` are installed with `npx shadcn add`, never
+hand-edited.
+
+```sh
+npm run check:tokens                      # rank screens by remaining literals
+npm run check:tokens -- app/page.tsx      # list every literal in a file; exits 1 if any
+```
+
+Screens are migrated one at a time; what the token set cannot express is
+recorded in `docs-internal/design-system-gaps.md` rather than faked.
+
+Theme selection follows the Polkadot app by default: `lib/components/host-theme-sync.tsx`
+subscribes to the host's theme (`host_theme_subscribe`) and maps Light/Dark to
+Berlin Day/Night at runtime — one `data-theme` attribute, no reload. Settings →
+Appearance lets the merchant pick any of the five themes instead; that choice
+wins over the host until they switch back to "Follow Polkadot app"
+(`lib/config/appearance.ts`). Outside a host the default applies (Berlin Day,
+following the OS to Berlin Night).
+
 ## Feature flags
 
 UI features that are built but parked for the current release are gated by
