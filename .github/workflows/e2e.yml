@@ -31,7 +31,14 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
+        # Same recipe as deploy-frontend.yml: drop the macOS-generated lockfile
+        # so Linux-only optional native modules resolve (npm bug #4828), and
+        # upgrade to npm 11 first — the npm 10.9.x bundled with Node 22 hits
+        # an arborist bug ("Cannot read properties of null (reading
+        # 'edgesOut')") on today's fresh resolution of this tree.
         run: |
+          npm install -g npm@11
+          npm --version
           rm -f package-lock.json
           npm install --no-audit --no-fund
 
