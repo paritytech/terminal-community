@@ -26,7 +26,7 @@
 const defineConfig = <T>(config: T): T => config;
 
 export default defineConfig({
-  domain: process.env.BULLETIN_DEPLOY_DOMAIN ?? "t3rminal.paseo",
+  domain: process.env.BULLETIN_DEPLOY_DOMAIN ?? "terminal.paseo",
   displayName: "T3RMINAL",
   description:
     "Polkadot point-of-sale terminal — accept payments and anchor signed sales reports on-chain.",

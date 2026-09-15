@@ -1,12 +1,12 @@
 {
-  "name": "@parity/t3rminal-v1",
+  "name": "@parity/terminal-community",
   "version": "0.1.0",
   "private": true,
   "license": "GPL-3.0-only",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/paritytech/t3rminal.git"
+    "url": "https://github.com/paritytech/terminal-community.git"
   },
   "scripts": {
     "papi:generate": "papi",

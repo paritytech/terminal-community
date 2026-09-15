@@ -15,8 +15,7 @@
  * writes the resulting address + chain into .env.local (gitignored) so the
  * static build inlines them.
  *
- * Usage:  npm run deploy                  (from apps/t3rminal-v1)
- *         npm run deploy:t3rminal-v1       (from the repo root)
+ * Usage:  npm run deploy                  (from the repo root)
  */
 
 import { spawnSync } from "node:child_process";

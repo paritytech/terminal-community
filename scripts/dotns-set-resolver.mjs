@@ -12,7 +12,7 @@
  * find the site. One `setResolver` per name fixes Android for good — later
  * redeploys keep the pointer.
  *
- * Usage (from t3rminal/):
+ * Usage (from the repo root):
  *   node scripts/dotns-set-resolver.mjs <name.paseo>             # read-only report
  *   MNEMONIC="…" node scripts/dotns-set-resolver.mjs <name.paseo> --apply
  *
