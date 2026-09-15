@@ -20,6 +20,7 @@ import {
   Search,
   ShoppingCart,
   StickyNote,
+  TriangleAlert,
   Undo2,
   QrCode,
 } from "lucide-react";
@@ -155,6 +156,9 @@ function TerminalPageInner() {
   // Partial credit progress for multi-group offboards: set while the running
   // total is below the requested amount, cleared once the sale completes.
   const [partial, setPartial] = useState<PartialPayment | null>(null);
+  // Coins claim that credited less than the cheque asked for (the host will
+  // claim no more) — shown on the completed screen next to the recorded amount.
+  const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string } | null>(null);
   const [svgReceipt, setSvgReceipt] = useState<string | null>(null);
   const [finalAmount, setFinalAmount] = useState<string>("");
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -422,6 +426,9 @@ function TerminalPageInner() {
     };
     setPaymentReceived(payment);
     setSaleId(result.paymentId);
+    setCoinsShortfall(
+      result.partial ? { requested: result.requestedAmount, credited: result.amount } : null,
+    );
 
     const receiptItems: ReceiptItem[] = pendingItems.map((line) => ({
       name: line.name,
@@ -691,6 +698,7 @@ function TerminalPageInner() {
     setFinalAmount("");
     setPaymentReceived(null);
     setPartial(null);
+    setCoinsShortfall(null);
     setSaleId(null);
     setSvgReceipt(null);
     setShowCancelModal(false);
@@ -1202,6 +1210,10 @@ function TerminalPageInner() {
     const paymentIncoming =
       useCoins &&
       (coinage.status === "claiming" || coinage.status === "paid");
+    // The host could not finish claiming the cheque's coins (see
+    // lib/payments/coinage/claim.ts). The customer has already paid, so the
+    // QR must not come back; the merchant retries the claim or cancels.
+    const claimFailed = useCoins && coinage.status === "error";
     const canCancelTransaction = !paymentIncoming && !partial && !paymentReceived;
     // Warning fill while the QR is being armed (connectivity pre-flight or
     // deeplink still computing); the inverted container surface once it's
@@ -1219,20 +1231,24 @@ function TerminalPageInner() {
               inverted fg. */}
           <div
             className={`basis-[30%] grow-0 shrink-0 px-6 pb-8 flex flex-col items-center justify-center gap-3 transition-colors ${
-              generating
+              generating || claimFailed
                 ? "bg-status-warning text-fg-static-white"
                 : "bg-surface-container-inverted text-fg-primary-inverted"
             }`}
           >
             {generating ? (
               <Hourglass className="size-6" aria-hidden />
+            ) : claimFailed ? (
+              <TriangleAlert className="size-6" aria-hidden />
             ) : (
               <Radio className="size-6" aria-hidden />
             )}
             <h2 data-testid="waiting-text" className="text-display-l text-center">
               {generating
                 ? "Generating Payment"
-                : paymentIncoming
+                : claimFailed
+                  ? "Claim didn't finish"
+                  : paymentIncoming
                   ? "Payment incoming…"
                   : partial
                     ? "Receiving payment…"
@@ -1290,6 +1306,10 @@ function TerminalPageInner() {
                   <div className="size-68 flex items-center justify-center">
                     <Loader2 className="size-6 animate-spin text-fg-secondary" />
                   </div>
+                ) : claimFailed ? (
+                  <div className="size-68 flex items-center justify-center">
+                    <TriangleAlert className="size-6 text-fg-warning" aria-hidden />
+                  </div>
                 ) : displayQrValue ? (
                   <QRCodeSVG value={displayQrValue} size={272} level="H" marginSize={2} />
                 ) : (
@@ -1299,8 +1319,23 @@ function TerminalPageInner() {
                 )}
               </div>
 
-              {useCoins && coinage.status === "error" && coinage.error && (
-                <p className="text-body-s text-fg-error mt-4 text-center max-w-xs">
+              {/* Claim progress / failure — plain words; the raw host reason is
+                  in the console and telemetry */}
+              {useCoins && coinage.status === "claiming" && (
+                <p data-testid="coins-claiming" className="text-body-m text-fg-secondary mt-4 text-center max-w-xs">
+                  {coinage.claimStage === "detecting"
+                    ? "Waiting for the coins to reach the chain"
+                    : coinage.claimStage === "claiming"
+                      ? "Moving the coins into your balance"
+                      : "Handing the payment to the Polkadot app"}
+                  {coinage.claimAttempt > 1
+                    ? ` · attempt ${coinage.claimAttempt} of ${coinage.claimMaxAttempts}`
+                    : ""}
+                  . This can take a minute.
+                </p>
+              )}
+              {claimFailed && coinage.error && (
+                <p data-testid="coins-claim-error" className="text-body-m text-fg-error mt-4 text-center max-w-xs">
                   {coinage.error}
                 </p>
               )}
@@ -1309,15 +1344,28 @@ function TerminalPageInner() {
             {/* Cancel pinned to the bottom; error-coloured label while still
                 generating. A secondary button — the screen's main action is
                 the customer's scan, not this. */}
-            {canCancelTransaction && (
-              <div className="shrink-0 pb-5">
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowCancelModal(true)}
-                  className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
-                >
-                  Cancel Transaction
-                </Button>
+            {(claimFailed || canCancelTransaction) && (
+              <div className="shrink-0 pb-5 flex flex-col gap-2">
+                {/* After a failed claim the retry is the screen's main action;
+                    Cancel stays beneath it as the quieter alternative. */}
+                {claimFailed && (
+                  <Button
+                    data-testid="btn-retry-claim"
+                    onClick={coinage.retryClaim}
+                    className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold"
+                  >
+                    Retry claim
+                  </Button>
+                )}
+                {canCancelTransaction && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowCancelModal(true)}
+                    className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
+                  >
+                    Cancel Transaction
+                  </Button>
+                )}
               </div>
             )}
           </main>
@@ -1422,6 +1470,11 @@ function TerminalPageInner() {
               {" · "}
               {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </p>
+            {coinsShortfall && (
+              <p data-testid="coins-shortfall" className="text-body-m text-fg-warning -mt-4 mb-6">
+                Received {coinsShortfall.credited} of {coinsShortfall.requested} {symbol}. The rest didn&apos;t arrive.
+              </p>
+            )}
 
             {/* Receipt note typed on the amount screen */}
             {note.trim() && (

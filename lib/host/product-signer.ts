@@ -1,12 +1,18 @@
 /**
  * Product-account `PolkadotSigner` with a correct `txExtVersion`.
  *
- * We keep the wrapper's signer for `publicKey` / `signBytes` and replace only
- * `signTx`: same `host_account_create_transaction` wire call the wrapper makes
- * (`@novasamatech/host-api-wrapper` `accounts.js` `getProductAccountSigner`,
- * `"createTransaction"` mode), field for field, except `txExtVersion` comes
- * from `deriveTxExtVersion` instead of the extrinsic format number. Drop this
- * once the wrapper ships the fix upstream.
+ * We keep the wrapper's key material for `publicKey` / `signBytes` and write
+ * `signTx` ourselves: same `host_account_create_transaction` wire call the
+ * wrapper makes (`@novasamatech/host-api-wrapper` `accounts.js`
+ * `getProductAccountSigner`, `"createTransaction"` mode), field for field,
+ * except `txExtVersion` comes from `deriveTxExtVersion` instead of the
+ * extrinsic format number. Drop this once the wrapper ships the fix upstream.
+ *
+ * Since host-api-wrapper 0.10.2 the wrapper's signer is a polkadot-api v3
+ * `TxCreator` — a callable with `publicKey` and `signBytes` attached — while
+ * this app still drives polkadot-api v2, whose `signSubmitAndWatch` wants a
+ * `PolkadotSigner` (`publicKey`, `signTx`, `signBytes`). Only those two
+ * members are taken from the base, so both wrapper shapes are accepted.
  */
 
 "use client";
@@ -21,13 +27,17 @@ const UNSUPPORTED_VERSION_ERROR = "Unsupported message version";
 
 export type CreateTransactionApi = Pick<typeof hostApi, "createTransaction">;
 
+/** The part of the wrapper's signer we reuse — same on v2 and v3 shapes. */
+export type SignerKeyMaterial = Pick<PolkadotSigner, "publicKey" | "signBytes">;
+
 export function createProductAccountSigner(
   account: ProductAccount,
-  base: PolkadotSigner,
+  base: SignerKeyMaterial,
   api: CreateTransactionApi = hostApi,
 ): PolkadotSigner {
   return {
-    ...base,
+    publicKey: base.publicKey,
+    signBytes: (data) => base.signBytes(data),
     async signTx(callData, signedExtensions, metadata) {
       const txExtVersion = deriveTxExtVersion(metadata);
       const checkGenesis = signedExtensions["CheckGenesis"];
