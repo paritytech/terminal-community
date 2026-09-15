@@ -130,7 +130,7 @@ jobs:
             else
               DOMAIN="terminal.paseo"
               export BULLETIN_DEPLOY_DOMAIN="$DOMAIN"
-              bulletin-deploy --publish --env paseo-next-v2 './out' "$DOMAIN"
+              bulletin-deploy --env paseo-next-v2 './out' "$DOMAIN"
             fi
         env:
           MNEMONIC: ${{ secrets.DOTNS_MNEMONIC }}
