@@ -28,6 +28,7 @@ import { useNavLock, useNavHidden } from "@/components/nav-lock";
 import { AmountHero } from "@/components/amount-hero";
 import { ScreenHeader } from "@/components/screen-header";
 import { Button } from "@/components/ui/button";
+import { HostConnectionHint } from "@/components/host-connection-status";
 import { Input } from "@/components/ui/input";
 import { FEATURES } from "@/lib/config/features";
 import { useAccount } from "@/lib/web3";
@@ -816,7 +817,7 @@ function TerminalPageInner() {
           <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
             <div className="text-center space-y-3 w-full">
               <h1 className="text-heading-l text-fg-primary">Welcome</h1>
-              <p className="text-body-m text-fg-tertiary">Connecting to host…</p>
+              <HostConnectionHint size="body" />
             </div>
           </main>
         </div>

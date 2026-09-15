@@ -7,8 +7,15 @@ import {
   WalletProviderEntry,
   Web3State,
 } from "@/lib/web3/types/web3"
+import type { HostConnectionState } from "@/lib/host/connection-status"
 
 interface Web3Store extends Web3State {
+  /**
+   * Outcome of the host auto-connect (lib/web3/components/providers/
+   * web3-provider.tsx). Not persisted — it describes this page load only.
+   */
+  hostConnection: HostConnectionState
+  setHostConnection: (state: HostConnectionState) => void
   setAccount: (account: Account | null) => void
   setStatus: (
     provider: WalletProviderType | null,
@@ -29,6 +36,8 @@ export const useWeb3Store = create<Web3Store>()(
   persist(
     (set, get) => ({
       ...initialState,
+      hostConnection: { status: "idle" },
+      setHostConnection: (hostConnection) => set((state) => ({ ...state, hostConnection })),
       setAccount: (account) => set((state) => ({ ...state, account })),
       setStatus: (provider, status) => {
         const isError = status === WalletProviderStatus.Error
