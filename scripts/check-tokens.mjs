@@ -42,19 +42,21 @@ const RULES = [
   { name: "dark: variant", re: /(?<![\w-])dark:/g },
   {
     name: "stock colour utility",
+    stringOnly: true,
     re: new RegExp(
       `(?<![\\w-])(?:[a-z-]+:)*(?:${COLOUR_PREFIX})-(?:${COLOURS})(?:-\\d{2,3})?(?:/\\d{1,3})?(?![\\w-])`,
       "g",
     ),
   },
-  { name: "stock radius", re: /(?<![\w-])rounded(?:-[trbl]|-[tb][lr]|-[se]|-[se][se])?(?:-(?:none|xs|sm|md|lg|xl|2xl|3xl|4xl))?(?![\w-])/g },
-  { name: "stock shadow", re: /(?<![\w-])shadow(?:-(?:2xs|xs|sm|md|lg|xl|2xl|inner|none))?(?![\w-])/g },
-  { name: "stock type step", re: /(?<![\w-])text-(?:xs|sm|base|lg|xl|[2-9]xl|\[\d+px\])(?![\w-])/g },
-  { name: "font-bold", re: /(?<![\w-])font-(?:bold|extrabold|black|light|thin|extralight)(?![\w-])/g },
-  { name: "leading-*", re: /(?<![\w-])leading-[\w[\]-]+/g },
-  { name: "tracking-*", re: /(?<![\w-])tracking-[\w[\]-]+/g },
+  { name: "stock radius", stringOnly: true, re: /(?<![\w-])rounded(?:-[trbl]|-[tb][lr]|-[se]|-[se][se])?(?:-(?:none|xs|sm|md|lg|xl|2xl|3xl|4xl))?(?![\w-])/g },
+  { name: "stock shadow", stringOnly: true, re: /(?<![\w-])shadow(?:-(?:2xs|xs|sm|md|lg|xl|2xl|inner|none))?(?![\w-])/g },
+  { name: "stock type step", stringOnly: true, re: /(?<![\w-])text-(?:xs|sm|base|lg|xl|[2-9]xl|\[\d+px\])(?![\w-])/g },
+  { name: "font-bold", stringOnly: true, re: /(?<![\w-])font-(?:bold|extrabold|black|light|thin|extralight)(?![\w-])/g },
+  { name: "leading-*", stringOnly: true, re: /(?<![\w-])leading-[\w[\]-]+/g },
+  { name: "tracking-*", stringOnly: true, re: /(?<![\w-])tracking-[\w[\]-]+/g },
   {
     name: "shadcn role outside components/ui",
+    stringOnly: true,
     re: /(?<![\w-])(?:bg|text|border)-(?:card|popover|muted|accent|primary|secondary|destructive|input|ring|background|foreground)(?:-foreground)?(?![\w-])/g,
   },
 ];
@@ -71,6 +73,18 @@ function walk(dir, out) {
     }
   }
   return out;
+}
+
+/** True when `index` sits inside a ' " or ` literal on this line (odd quote count before it). */
+function insideStringLiteral(line, index) {
+  let quote = null;
+  for (let i = 0; i < index; i++) {
+    const ch = line[i];
+    if (ch === "\\") { i++; continue; }
+    if (quote) { if (ch === quote) quote = null; }
+    else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+  }
+  return quote !== null;
 }
 
 function scan(file) {
@@ -109,6 +123,9 @@ function scan(file) {
       rule.re.lastIndex = 0;
       let m;
       while ((m = rule.re.exec(code)) !== null) {
+        // Class-name rules only count inside a string/template literal —
+        // `const rounded = Math.round(x)` is an identifier, not a utility.
+        if (rule.stringOnly && !insideStringLiteral(code, m.index)) continue;
         hits.push({ line: i + 1, rule: rule.name, match: m[0] });
       }
     }

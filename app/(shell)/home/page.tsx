@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ClipboardList, Settings, TrendingUp, ReceiptText, Store } from "lucide-react";
 import { AmountHero } from "@/components/amount-hero";
 import { ScreenHeader } from "@/components/screen-header";
+import { iconButtonClass } from "@/components/subpage-header";
 import { useTodaysIncome } from "@/lib/storage";
 import { FEATURES } from "@/lib/config/features";
 import { useMerchantProfile } from "@/lib/config/merchant";
@@ -32,8 +33,8 @@ export default function HomePage() {
         <ScreenHeader
           title="Home"
           action={
-            <Link href="/settings" aria-label="Settings" className="p-2 -mr-2">
-              <Settings className="w-6 h-6 text-white" />
+            <Link href="/settings" aria-label="Settings" className={`${iconButtonClass} -mr-2`}>
+              <Settings className="size-6" />
             </Link>
           }
         />
@@ -53,10 +54,10 @@ export default function HomePage() {
             tooling) unlocks with the merchant profile. The Become a Merchant
             entry is parked behind FEATURES.becomeMerchant for R1. */}
         <section className="px-6 grid grid-cols-2 gap-4">
-          <HomeTile icon={TrendingUp} label="Sales" accent href="/home/sales" />
-          <HomeTile icon={ReceiptText} label="Export CSV" accent href="/home/export" />
+          <HomeTile icon={TrendingUp} label="Sales" href="/home/sales" />
+          <HomeTile icon={ReceiptText} label="Export CSV" href="/home/export" />
           {merchant.completed && (
-            <HomeTile icon={ClipboardList} label="Reports" accent href="/home/reports" />
+            <HomeTile icon={ClipboardList} label="Reports" href="/home/reports" />
           )}
           {FEATURES.becomeMerchant && !merchant.isLoading && !merchant.completed && (
             <HomeTile icon={Store} label="Become a Merchant" href="/merchant" />
@@ -67,24 +68,27 @@ export default function HomePage() {
   );
 }
 
+/**
+ * A destination tile: a container surface with shadow-1 that lifts on hover.
+ * The old brand-blue "accent" fill has no token (the system has no chromatic
+ * accent unless asked for) — every tile is the same surface now; see the gap
+ * register.
+ */
 function HomeTile({
   icon: Icon,
   label,
-  accent = false,
   href,
 }: {
   icon: typeof TrendingUp;
   label: string;
-  accent?: boolean;
   href?: string;
 }) {
-  const className = `aspect-square rounded-3xl p-5 flex flex-col justify-between items-start text-left transition active:scale-95 ${
-    accent ? "bg-[#4353ff] hover:bg-[#3646e0]" : "bg-neutral-900 hover:bg-neutral-800"
-  }`;
+  const className =
+    "aspect-square rounded-container p-5 flex flex-col justify-between items-start text-left bg-surface-container shadow-1 hover:bg-selection-container-hover transition active:scale-95";
   const content = (
     <>
-      <Icon className="w-7 h-7 text-white" />
-      <span className="text-white text-xl font-semibold leading-tight">{label}</span>
+      <Icon className="size-6 text-fg-primary" aria-hidden />
+      <span className="text-heading-m text-fg-primary">{label}</span>
     </>
   );
   return href ? (

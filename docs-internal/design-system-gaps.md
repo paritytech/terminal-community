@@ -17,6 +17,20 @@ the row.
 | Splash — `app/page.tsx` | done |
 | Root — `app/layout.tsx`, `app/globals.css` | done |
 | Settings — `app/(shell)/settings/page.tsx` (menu + Appearance) | done |
+| Home — `app/(shell)/home/page.tsx` (tiles) | done |
+| History — `app/(shell)/history/page.tsx` (list, detail, receipt, share QR) | done |
+| Home → Sales — `app/(shell)/home/sales/page.tsx` (stat cards, chart, tabs) | done |
+| Home → Export CSV — `app/(shell)/home/export/page.tsx` (chips, calendar sheet, preview) | done |
+| Settings → Details, Payment Method, Help us fix an issue | done |
+| Global error boundary — `app/global-error.tsx` (own `<html>`, same fonts/theme bootstrap) | done |
+| Report job toast — `lib/components/report-job-provider.tsx` | done |
+| Shared — `components/subpage-header.tsx` (back/close + title + 40px action slot, `iconButtonClass`) | done |
+
+That is the whole R1-visible surface (Become a Merchant is off by flag). Still
+on stock literals: the merchant-gated screens (merchant onboarding,
+home/reports/*, settings/items, receipt, merchant-profile, legacy items+tips,
+daily-reports) and the URL-only legacy settings pages (backup, encryption,
+export, wallet, onchain, logs), plus `components/report-row.tsx`.
 
 Everything else still carries stock Tailwind literals. Because the theme bundle
 deletes the stock colour, radius and weight namespaces, un-migrated screens
@@ -51,6 +65,24 @@ a tonal theme.
 | 6 | **`theme-color` meta** — a `<meta>` cannot read a token, and the surface now changes per theme. | removed from `app/layout.tsx`; `public/manifest.json` still carries `#0f172a` | PWA chrome colour |
 | 7 | **Brand wordmark face** — "T3RMINAL" was set in Unbounded, not one of the three system faces. Unbounded is no longer loaded anywhere (removed from `app/layout.tsx` and `app/globals.css`). If the wordmark must keep a bespoke face, that is a logo asset (SVG), not a type style. | `text-display-xl` (Manrope) | splash |
 | 8 | **Focus ring contrast** — known upstream gap (1.55–1.78:1, below WCAG 3:1). | none — do not paper over locally | every focusable control |
+
+## Token gaps (Home, History, Sales, Export CSV, Settings subpages)
+
+| # | Role needed | Stand-in used | Where |
+| --- | --- | --- | --- |
+| 9 | **Brand accent tile fill** — the Home tiles were brand blue (`#4353ff`). The system has no chromatic accent unless asked for (`bg-accent-blue` is opt-in). | `bg-surface-container` + `shadow-1` on every tile | Home tiles |
+| 10 | **Chart palette** — the bar chart had a blue "current" bar and grey rest; the token set has no data-viz colours (upstream gap `no-chart-palette`). | `bg-illustration-dark` (current bucket) / `bg-illustration-dark-muted` (rest) | Sales chart |
+| 11 | **Success tint disc** — History rows had a dark-green disc behind the "received" arrow. No success tint exists. | icon only, `text-fg-success`, in a 44px box | History list rows |
+| 12 | **Selected-day range fill** in the calendar was a neutral tint; `bg-surface-nested` is used, which on the four light themes only reads because the sheet is a container. | `bg-surface-nested` inside `bg-surface-container` | Export CSV calendar |
+| 13 | **Refunds indicator** was orange; only success / warning / error status colours exist. | `bg-status-warning` dot | Sales "Refunds" card |
+
+## Copy flagged (not rewritten)
+
+| Text | Where | Issue | Proposed |
+| --- | --- | --- | --- |
+| "Thanks! for your feedback we'll look into it" | Report a problem, success | punctuation splits the sentence | "Thanks for your feedback — we'll look into it." |
+| "Type Transaction ID" (search placeholder) | History | asks a person for a machine identifier; the list is searched by order number | "Search by order number" |
+| "Payment Record #XXXX" / "Record #XXXX" | Check out receipt, History receipt | raw id fragment as a title (see rule table above) | "Receipt · Order NN" once a sequential order number exists |
 
 ## Rule violations kept for a product decision (not styling)
 

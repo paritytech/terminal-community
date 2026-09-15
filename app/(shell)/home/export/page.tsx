@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CalendarDays, Check, FileText, Loader2 } from "lucide-react";
+import { CalendarDays, Check, Files, FileText, Loader2 } from "lucide-react";
+import { SubpageHeader } from "@/components/subpage-header";
+import { Button } from "@/components/ui/button";
 import { useAccount } from "@/lib/web3";
 import { useAdminQrPayload } from "@/lib/config/admin-qr";
 import { useBulletin } from "@/lib/hooks/use-bulletin";
@@ -63,6 +65,12 @@ function createdAtLabel(value: Date | string): string {
   const yy = String(d.getFullYear() % 100).padStart(2, "0");
   return `${dd}.${mm}.${yy} at ${time}`;
 }
+
+// Period chips: a chip keeps rounded-full (outside the pill count) and is
+// selected by moving to the primary action surface.
+const CHIP_BASE = "inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-label-m transition-colors";
+const CHIP_OFF = "bg-action-tertiary text-fg-primary hover:bg-action-tertiary-hover";
+const CHIP_ON = "bg-action-primary text-fg-primary-inverted hover:bg-action-primary-hover";
 
 export default function ExportCsvPage() {
   const router = useRouter();
@@ -181,28 +189,26 @@ export default function ExportCsvPage() {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
-          <header className="flex items-center justify-between px-4 py-4">
-            <button onClick={() => setViewReport(null)} className="p-2" aria-label="Back to reports">
-              <ArrowLeft className="w-6 h-6 text-white" />
-            </button>
-            <span className="text-white text-lg font-semibold truncate">Report for {viewReport.label}</span>
-            <div className="w-10" />
-          </header>
+          <SubpageHeader
+            title={`Report for ${viewReport.label}`}
+            onBack={() => setViewReport(null)}
+            backLabel="Back to reports"
+          />
 
           <main className="flex-1 min-h-0 flex flex-col px-4 pb-6">
-            {/* CSV preview on a white sheet */}
-            <div className="flex-1 min-h-0 bg-white rounded-2xl overflow-auto p-4 mb-6">
-              <pre className="text-[9px] leading-relaxed text-black font-mono whitespace-pre">
+            {/* CSV preview — a container sheet, code in the mono face */}
+            <div className="flex-1 min-h-0 bg-surface-container rounded-container shadow-1 overflow-auto p-4 mb-6">
+              <pre className="text-code font-mono text-fg-primary whitespace-pre">
                 {previewCsv(viewReport.csv)}
               </pre>
             </div>
 
-            <button
+            <Button
               onClick={() => downloadReport(viewReport)}
-              className="w-full bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-xl transition shrink-0"
+              className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold shrink-0"
             >
               Download CSV
-            </button>
+            </Button>
           </main>
         </div>
       </div>
@@ -211,89 +217,86 @@ export default function ExportCsvPage() {
 
   /* ── Main screen ─────────────────────────────────────────────── */
 
-  const chipBase = "px-4 py-2.5 rounded-xl text-sm font-medium transition border";
-  const chipOff = "border-neutral-700 text-white hover:bg-neutral-800";
-  const chipOn = "bg-neutral-700 border-neutral-500 text-white";
-  const chipDisabled = generating ? "opacity-40 pointer-events-none" : "";
+  const chipDisabled = generating ? "opacity-50 pointer-events-none" : "";
+  const chip = (on: boolean) => `${CHIP_BASE} ${on ? CHIP_ON : CHIP_OFF} ${chipDisabled}`;
 
   const customChipLabel = customRange
     ? rangeLabel(customRange.from, customRange.to)
     : "Custom";
 
+  const canGenerate = Boolean(period && !generating && txCount > 0 && merchantIdentity);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-        {/* Header */}
-        <header className="flex items-center justify-between px-4 py-4">
-          <button onClick={() => router.back()} className="p-2" aria-label="Back to home">
-            <ArrowLeft className="w-6 h-6 text-white" />
-          </button>
-          <span className="text-white text-lg font-semibold">Export CSV</span>
-          <div className="w-10" />
-        </header>
+        <SubpageHeader title="Export CSV" onBack={() => router.back()} backLabel="Back to home" />
 
         <main className="flex-1 flex flex-col px-4 pb-6">
           {/* New report card */}
-          <div className="bg-neutral-900 rounded-3xl p-5 mb-8">
+          <div className="bg-surface-container rounded-container shadow-1 p-5 mb-8">
             <div className="flex items-center gap-4 mb-5">
-              <div className="w-12 h-12 rounded-full bg-neutral-800 flex items-center justify-center shrink-0">
-                <FileText className="w-6 h-6 text-white" />
+              <div className="size-12 rounded-full bg-surface-nested flex items-center justify-center shrink-0">
+                <FileText className="size-6 text-fg-primary" aria-hidden />
               </div>
               <div className="min-w-0">
-                <h2 className="text-white text-2xl font-bold leading-tight">New report</h2>
-                <p data-testid="export-subtitle" className="text-neutral-400 text-sm">{subtitle}</p>
+                <h2 className="text-heading-l text-fg-primary">New report</h2>
+                <p data-testid="export-subtitle" className="text-body-m text-fg-secondary">{subtitle}</p>
               </div>
             </div>
 
             {/* Period chips */}
             <div className="flex flex-wrap gap-2.5 mb-5">
               <button
+                type="button"
+                aria-pressed={period === "today"}
                 onClick={() => setPeriod(period === "today" ? null : "today")}
-                className={`${chipBase} ${period === "today" ? chipOn : chipOff} ${chipDisabled}`}
+                className={chip(period === "today")}
               >
                 Today
               </button>
               <button
+                type="button"
+                aria-pressed={period === "week"}
                 onClick={() => setPeriod(period === "week" ? null : "week")}
-                className={`${chipBase} ${period === "week" ? chipOn : chipOff} ${chipDisabled}`}
+                className={chip(period === "week")}
               >
                 This week
               </button>
               <button
+                type="button"
+                aria-pressed={period === "month"}
                 onClick={() => setPeriod(period === "month" ? null : "month")}
-                className={`${chipBase} ${period === "month" ? chipOn : chipOff} ${chipDisabled}`}
+                className={chip(period === "month")}
               >
                 This month
               </button>
               <button
+                type="button"
+                aria-pressed={period === "custom"}
                 onClick={() => setCalendarOpen(true)}
-                className={`${chipBase} ${period === "custom" ? chipOn : chipOff} ${chipDisabled} flex items-center gap-2`}
+                className={chip(period === "custom")}
               >
                 {customChipLabel}
-                <CalendarDays className="w-4 h-4" />
+                <CalendarDays className="size-4" aria-hidden />
               </button>
             </div>
 
             {error && (
-              <div className="bg-red-900/30 border border-red-800 rounded-lg p-2 text-red-400 text-xs mb-3">
+              <div className="bg-action-error rounded-nested px-3 py-2 text-body-s text-fg-error mb-3">
                 {error}
               </div>
             )}
 
-            {/* Generate button — four states per the design */}
-            <button
+            {/* Generate — the card's one action; disabled is the surface, not a fade */}
+            <Button
               data-testid="btn-generate-report"
               onClick={handleGenerate}
-              disabled={!period || generating || txCount === 0 || !merchantIdentity}
-              className={`w-full py-4 rounded-xl font-semibold transition flex items-center justify-center gap-2 ${
-                period && !generating && txCount > 0 && merchantIdentity
-                  ? "bg-white hover:bg-neutral-100 text-black"
-                  : "bg-neutral-800 text-neutral-500"
-              }`}
+              disabled={!canGenerate}
+              className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
             >
               {generating ? (
                 <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <Loader2 className="size-5 animate-spin" aria-hidden />
                   Generating...
                 </>
               ) : period && txCount === 0 ? (
@@ -301,56 +304,53 @@ export default function ExportCsvPage() {
               ) : (
                 "Generate report"
               )}
-            </button>
+            </Button>
           </div>
 
           {/* Recent reports / zero state */}
           {reports && reports.length > 0 ? (
             <section>
-              <h3 className="text-neutral-400 text-sm font-semibold tracking-widest uppercase mb-4">
+              <h3 className="text-overline uppercase text-fg-secondary mb-3 px-2">
                 Recent reports
               </h3>
-              <div className="space-y-5">
+              <div className="space-y-1">
                 {reports.map((report) => (
                   <button
                     key={report.reportId}
                     onClick={() => setViewReport(report)}
-                    className="w-full flex items-center gap-4 text-left group"
+                    className="w-full flex items-center gap-4 px-2 py-2.5 rounded-medium text-left hover:bg-surface-container transition-colors"
                   >
-                    <div className="w-11 h-11 rounded-full bg-neutral-800 flex items-center justify-center shrink-0 group-hover:bg-neutral-700 transition">
-                      <FileText className="w-5 h-5 text-white" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-white font-semibold truncate">Report for {report.label}</p>
-                      <p className="text-neutral-500 text-sm">
+                    <span className="size-11 flex items-center justify-center shrink-0">
+                      <FileText className="size-5 text-fg-secondary" aria-hidden />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-label-l text-fg-primary truncate">
+                        Report for {report.label}
+                      </span>
+                      <span className="block text-body-m text-fg-tertiary">
                         {report.txCount} transactions · {createdAtLabel(report.createdAt)}
-                      </p>
-                    </div>
+                      </span>
+                    </span>
                   </button>
                 ))}
               </div>
             </section>
           ) : reports ? (
-            <div className="flex-1 flex flex-col items-center justify-center py-16">
-              {/* Stacked-documents illustration */}
-              <div className="relative w-24 h-14 mb-6" aria-hidden>
-                <div className="absolute inset-x-3 top-0 h-9 rounded-lg bg-neutral-900" />
-                <div className="absolute inset-x-0 top-4 h-10 rounded-lg bg-neutral-800 p-2.5 space-y-1.5">
-                  <div className="w-1/2 h-1 rounded bg-neutral-600" />
-                  <div className="w-3/4 h-1 rounded bg-neutral-700" />
-                </div>
+            <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+              <div className="bg-surface-container rounded-full p-4 mb-4 shadow-1">
+                <Files className="size-6 text-fg-tertiary" aria-hidden />
               </div>
-              <p className="text-neutral-500 text-sm">Your exported reports will appear here</p>
+              <p className="text-body-m text-fg-secondary">Your exported reports will appear here</p>
             </div>
           ) : null}
         </main>
       </div>
 
-      {/* Success toast */}
+      {/* Success toast — on the inverted surface, like every transient note */}
       {showSuccess && (
         <div className="fixed bottom-20 inset-x-0 z-40 flex justify-center px-6">
-          <div className="flex items-center gap-2 bg-neutral-800 border border-neutral-700 text-white text-sm font-medium px-5 py-3 rounded-full shadow-xl">
-            <Check className="w-4 h-4" />
+          <div className="flex items-center gap-2 bg-surface-container-inverted text-fg-primary-inverted text-label-m px-5 py-3 rounded-full shadow-2">
+            <Check className="size-4" aria-hidden />
             Report Generated Successfully
           </div>
         </div>
@@ -373,7 +373,7 @@ export default function ExportCsvPage() {
   );
 }
 
-/** First ~30 lines of the CSV, for the white preview sheet. */
+/** First ~30 lines of the CSV, for the preview sheet. */
 function previewCsv(csv: string): string {
   const lines = csv.split("\n");
   const shown = lines.slice(0, 30);
@@ -425,25 +425,25 @@ function DateRangeSheet({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
-      <button aria-label="Close calendar" onClick={onClose} className="absolute inset-0 bg-black/60" />
-      <div className="relative bg-neutral-900 rounded-t-3xl max-h-[75dvh] flex flex-col max-w-md mx-auto w-full">
+      <button aria-label="Close calendar" onClick={onClose} className="absolute inset-0 bg-surface-overlay" />
+      <div className="relative bg-surface-container rounded-t-container shadow-3 max-h-[75dvh] flex flex-col max-w-md mx-auto w-full">
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
-          <span className="text-white text-xl font-bold">{title}</span>
-          <button
+          <span className="text-heading-l text-fg-primary">{title}</span>
+          <Button
+            variant="ghost"
+            disabled={!from}
             onClick={() => { setFrom(null); setTo(null); }}
-            className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition ${
-              from ? "text-red-500 bg-red-500/10 hover:bg-red-500/20" : "text-neutral-500 bg-neutral-800"
-            }`}
+            className="text-label-m text-fg-error"
           >
             Reset
-          </button>
+          </Button>
         </div>
 
-        {/* Weekday header */}
-        <div className="grid grid-cols-7 px-5 pb-2 border-b border-neutral-800 shrink-0">
+        {/* Weekday header — a table rule is a sanctioned border */}
+        <div className="grid grid-cols-7 px-5 pb-2 border-b shrink-0">
           {WEEKDAYS.map((d) => (
-            <span key={d} className="text-neutral-500 text-xs text-center">{d}</span>
+            <span key={d} className="text-caption text-fg-tertiary text-center">{d}</span>
           ))}
         </div>
 
@@ -461,15 +461,17 @@ function DateRangeSheet({
           ))}
         </div>
 
-        {/* Confirm */}
+        {/* Confirm — the sheet's bottom slot. The fade behind it is the one
+            gradient the token set defines: the navigation overlay, which
+            keeps the calendar legible as it scrolls under the button. */}
         {from && to && (
-          <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-neutral-900 via-neutral-900/95 to-transparent">
-            <button
+          <div className="absolute inset-x-0 bottom-0 p-4 bg-[linear-gradient(to_top,var(--gradient-navigation-overlay-start),var(--gradient-navigation-overlay-end))]">
+            <Button
               onClick={() => onConfirm(from, to)}
-              className="w-full bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-2xl transition"
+              className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold"
             >
               Select Dates
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -505,7 +507,7 @@ function MonthGrid({
 
   return (
     <div className="py-3">
-      <p className="text-neutral-400 text-sm mb-3">
+      <p className="text-body-m text-fg-secondary mb-3">
         {MONTH_NAMES[month]}{year !== new Date().getFullYear() ? ` ${year}` : ""}
       </p>
       <div className="grid grid-cols-7 gap-y-1">
@@ -518,15 +520,16 @@ function MonthGrid({
           return (
             <button
               key={t}
+              type="button"
               disabled={disabled}
               onClick={() => onPick(day)}
-              className={`h-10 flex items-center justify-center text-sm transition ${
-                inRange ? "bg-neutral-800" : ""
-              } ${disabled ? "text-neutral-700" : "text-white"}`}
+              className={`h-10 flex items-center justify-center text-body-m font-mono transition-colors ${
+                inRange ? "bg-surface-nested" : ""
+              } ${disabled ? "text-fg-disabled cursor-not-allowed" : "text-fg-primary hover:bg-selection-container-hover"}`}
             >
               <span
-                className={`w-9 h-9 flex items-center justify-center rounded-full ${
-                  isEndpoint ? "bg-white text-black font-semibold" : ""
+                className={`size-9 flex items-center justify-center rounded-full ${
+                  isEndpoint ? "bg-action-primary text-fg-primary-inverted" : ""
                 }`}
               >
                 {day.getDate()}

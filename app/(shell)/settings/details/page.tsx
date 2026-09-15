@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, Check, Copy } from "lucide-react";
+import { Check, Copy } from "lucide-react";
+import { SubpageHeader, iconButtonClass } from "@/components/subpage-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { setTerminalName, useTerminalIdentity } from "@/lib/config/terminal";
 
 /**
  * Settings → Details: this terminal's identity. The name is merchant-chosen;
  * the Terminal ID is minted once per device and read-only — it tags receipts
- * and payment deeplinks.
+ * and payment deeplinks. This page is where the ID is shown on purpose (with
+ * a copy control), so it is the sanctioned place for the raw value.
  */
 export default function DetailsSettingsPage() {
   const { name, terminalId, isLoading } = useTerminalIdentity();
@@ -42,70 +46,62 @@ export default function DetailsSettingsPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
-        {/* Header */}
-        <header className="flex items-center justify-between px-4 py-4 shrink-0">
-          <Link href="/settings" className="p-2" aria-label="Back to settings">
-            <ArrowLeft className="w-6 h-6 text-white" />
-          </Link>
-          <span className="text-white text-lg font-semibold">Details</span>
-          <div className="w-10" />
-        </header>
+        <SubpageHeader title="Details" backHref="/settings" backLabel="Back to settings" />
 
         <main className="flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pb-6">
           {/* Terminal name */}
-          <label className="block rounded-2xl border border-neutral-800 bg-neutral-950 px-4 py-3">
-            {draftName !== "" && (
-              <span className="block text-neutral-500 text-xs mb-0.5">Terminal name</span>
-            )}
-            <input
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="terminal-name" className="text-label-m text-fg-secondary">
+              Terminal name
+            </Label>
+            <Input
+              id="terminal-name"
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
               maxLength={48}
-              placeholder="Terminal name"
-              className="w-full bg-transparent text-white text-base outline-none placeholder:text-neutral-500"
+              placeholder="e.g. Front counter"
+              className="h-12"
             />
-          </label>
-          <p className="text-neutral-500 text-xs mt-2">
-            A label for this device — e.g. &quot;Front counter&quot;.
-          </p>
+            <p className="text-caption text-fg-tertiary">A label for this device.</p>
+          </div>
 
-          {/* Terminal ID — read-only */}
-          <div className="mt-5 rounded-2xl border border-neutral-800 bg-neutral-900 px-4 py-3 flex items-center gap-3">
+          {/* Terminal ID — read-only, on a container surface (not a control,
+              so no hairline) */}
+          <div className="mt-5 rounded-nested bg-surface-container px-4 py-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-neutral-500 text-xs mb-0.5">Terminal ID</p>
-              <p className="text-white font-mono text-lg tracking-widest">
-                {terminalId ?? "…"}
-              </p>
+              <p className="text-caption text-fg-tertiary mb-0.5">Terminal ID</p>
+              <p className="text-body-l font-mono text-fg-primary">{terminalId ?? "…"}</p>
             </div>
             <button
               type="button"
               onClick={handleCopy}
               aria-label="Copy terminal ID"
-              className="shrink-0 text-neutral-400 hover:text-white transition"
+              className={`${iconButtonClass} shrink-0 text-fg-secondary`}
             >
-              {copied ? <Check className="w-5 h-5" /> : <Copy className="w-5 h-5" />}
+              {copied ? <Check className="size-5 text-fg-success" /> : <Copy className="size-5" />}
             </button>
           </div>
-          <p className="text-neutral-500 text-xs mt-2">
+          <p className="text-caption text-fg-tertiary mt-2">
             Generated once for this device. Shown on receipts and attached to
             payments.
           </p>
 
           <div className="flex-1" />
-          <button
+          {/* The screen's one action, in the bottom slot */}
+          <Button
             type="button"
             onClick={handleSave}
             disabled={isLoading || draftName.trim() === name.trim()}
-            className="mt-8 w-full bg-white hover:bg-neutral-100 disabled:bg-neutral-900 disabled:text-neutral-600 text-black font-semibold py-4 rounded-2xl transition flex items-center justify-center gap-2"
+            className="mt-8 w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
           >
             {saved ? (
               <>
-                <Check className="w-5 h-5" /> Saved
+                <Check className="size-5" aria-hidden /> Saved
               </>
             ) : (
               "Save"
             )}
-          </button>
+          </Button>
         </main>
       </div>
     </div>
