@@ -12,6 +12,9 @@ export {
   searchSales,
   updateSyncStatus,
   markSaleFinalized,
+  recordSaleClaimShortfall,
+  markSaleReverted,
+  getSalesAwaitingClaimFinality,
   getPendingPayments,
   setSetting,
   getSetting,
@@ -35,6 +38,9 @@ export {
   useSale,
   useSyncState,
 } from './hooks';
+
+// Derived state
+export { saleClaimState, type SaleClaimState } from './sale-state';
 
 // Types
 export type {

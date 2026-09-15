@@ -53,7 +53,8 @@ export default function SalesPage() {
   const [activeBar, setActiveBar] = useState<number | null>(null);
 
   const stats = useMemo(() => {
-    const incoming = (sales ?? []).filter((s: SaleRecord) => s.type === "incoming");
+    // Incoming only; a coins claim the host later reverted is not a sale.
+    const incoming = (sales ?? []).filter((s: SaleRecord) => s.type === "incoming" && !s.revertedAt);
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekStart = startOfWeek(now);

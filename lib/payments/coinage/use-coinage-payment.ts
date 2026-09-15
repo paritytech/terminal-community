@@ -10,10 +10,10 @@
  *   4. on a matching statement: decrypts the "cheque" envelope (ECIES),
  *      validates id + amount, then claims the bearer coins into the merchant
  *      coin set through the host: `paymentTopUp(Coins)` registers the claim
- *      under a 32-byte id and `subscribeTopUpStatus(id)` follows it to a
- *      terminal status — re-registering while the host reports nothing on
- *      chain yet, and accepting a partial credit as the result it is. The
- *      contract with the host is spelled out in ./claim.ts.
+ *      under a 32-byte id and `subscribeTopUpStatus(id)` follows it until
+ *      the sale settles (first `claimed`, or a partial credit — a result,
+ *      not a failure). Finality is followed afterwards, in the background,
+ *      by ./topup-watcher.ts. The contract with the host is in ./claim.ts.
  *
  * The terminal itself does no on-chain work — the host moves the coins.
  */
@@ -37,9 +37,9 @@ import { buildPayW3sDeeplink, normalizeAmount } from "./deeplink";
 import { withSpan, captureWarning, withPaymentTrace } from "@/lib/telemetry";
 import { classifyTopupError, describeTopupFailure, type TopupErrorKind } from "./topup-error";
 import {
-  claimCoinsWithRetry,
+  claimCoins,
   deriveTopUpId,
-  DEFAULT_CLAIM_ATTEMPTS,
+  topUpIdToHex,
   type ClaimHost,
   type TopUpStatusEvent,
 } from "./claim";
@@ -113,6 +113,14 @@ export interface CoinagePaymentResult {
   requestedAmount: string;
   /** True when the host credited less than requested and will claim no more. */
   partial: boolean;
+  /**
+   * True when the host's `claimed` was already finalized (or the outcome is
+   * partial, which is final). False means "in a best-chain block": record
+   * the sale, but keep following `topUpId` for the last word.
+   */
+  finalized: boolean;
+  /** Hex of the host's top-up registration id — stored on the sale for the watcher. */
+  topUpId: string;
   /** How many coins the cheque carried. */
   coinCount: number;
   /** Sender timestamp (ms) from the payload. */
@@ -137,14 +145,12 @@ export interface UseCoinagePayment {
   errorKind: TopupErrorKind | null;
   /** Which registration of the current claim is running (1-based; 0 before the first). */
   claimAttempt: number;
-  /** How many registrations a claim makes before it reports a failure. */
-  claimMaxAttempts: number;
   /** The host's progress on the current registration, for the waiting copy. */
   claimStage: ClaimStage | null;
   /**
-   * Re-run the claim for the cheque already received. Safe to call any number
-   * of times: the host keys the claim on the coin keys, so a retry rejoins the
-   * claims already registered. No-op unless `status === "error"`.
+   * Register the claim again, under the next id, for the cheque already
+   * received. The host is idempotent per id and refuses a busy source, so
+   * this can never double-claim. No-op unless `status === "error"`.
    */
   retryClaim: () => void;
 }
@@ -292,32 +298,29 @@ export function useCoinagePayment(
             `claiming ${claimed.coins.length} coin(s) [byte lengths: ${coinLens}] for ${claimed.amount} via paymentTopUp(Coins)`,
           );
 
+          const attempt = registrations + 1;
+          registrations = attempt;
+          setClaimAttempt(attempt);
+          log(`  registration ${attempt} id=${toHex(deriveTopUpId(id, attempt))}`);
+          if (attempt > 1) {
+            captureWarning("topUp re-registered with a fresh id (manual retry)", { paymentId: id, attempt });
+          }
+
           try {
-            const outcome = await claimCoinsWithRetry({
+            const outcome = await claimCoins({
               host: claimHost,
               amountPlanck: requestedPlanck,
               keys: claimed.coins,
-              topUpId: (attempt) => deriveTopUpId(id, attempt),
-              firstAttempt: registrations + 1,
+              topUpId: (n) => deriveTopUpId(id, n),
+              attempt,
               signal: abort.signal,
-              onAttempt: (attemptIndex, max, attempt) => {
-                registrations = attempt;
-                setClaimAttempt(attemptIndex);
-                setClaimStage("registering");
-                log(`  registration ${attempt} (${attemptIndex}/${max}) id=${toHex(deriveTopUpId(id, attempt))}`);
-                if (attempt > 1) {
-                  captureWarning("topUp re-registered with a fresh id", {
-                    paymentId: id,
-                    attempt,
-                  });
-                }
-              },
-              onStatus: (status: TopUpStatusEvent, attempt) => {
-                log(`  status (registration ${attempt}): ${status.type}`);
+              onStatus: (status: TopUpStatusEvent) => {
+                log(`  status: ${status.type}${status.type === "claimed" ? ` (finalized=${status.finalized})` : ""}`);
                 if (status.type === "detecting" || status.type === "claiming") setClaimStage(status.type);
               },
-              onRetryableFailure: (attempt, err) => {
-                log(`  registration ${attempt} ended with "${describeError(err)}" — registering again`);
+              onResubscribe: (n, err) => {
+                log(`  status subscription dropped (${describeError(err)}) — re-subscribing (${n})`);
+                captureWarning("topUp status subscription dropped — re-subscribing", { paymentId: id, resubscribe: n });
               },
             });
             if (cancelled) return;
@@ -327,6 +330,7 @@ export function useCoinagePayment(
               PUSD_DECIMALS,
             );
             const partial = outcome.kind === "partial";
+            const finalized = partial || outcome.finalized;
             const phaseCommon = {
               paymentId: id,
               amount: credited,
@@ -344,7 +348,7 @@ export function useCoinagePayment(
                 credited,
               });
             } else {
-              log("  claim ok — paid");
+              log(`  claim ok — paid (${finalized ? "finalized" : "in block, finality pending"})`);
             }
             setClaimStage(null);
             setStatus("paid");
@@ -353,6 +357,8 @@ export function useCoinagePayment(
               amount: credited,
               requestedAmount: claimed.amount,
               partial,
+              finalized,
+              topUpId: topUpIdToHex(outcome.topUpId),
               coinCount: claimed.coins.length,
               timestamp: Number(claimed.timestamp),
             });
@@ -534,7 +540,6 @@ export function useCoinagePayment(
     error,
     errorKind,
     claimAttempt,
-    claimMaxAttempts: DEFAULT_CLAIM_ATTEMPTS,
     claimStage,
     retryClaim,
   };

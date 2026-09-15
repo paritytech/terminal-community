@@ -54,12 +54,33 @@ export interface SaleRecord {
   syncError?: string;
 
   /**
-   * Set when the GRANDPA-finalized event for `blockHash` lands. The sale is
-   * persisted on best-block (so the merchant can move on), and the watcher
-   * in lib/payments/finalization-watcher.ts patches this field a few blocks
-   * later. Absence means "still confirming"; presence means terminal.
+   * Set once the payment is final. The sale is persisted on best-block (so
+   * the merchant can move on) and a background watcher patches this field
+   * later: for coins, lib/payments/coinage/topup-watcher.ts on the host's
+   * `claimed { finalized: true }`. Absence means "still confirming";
+   * presence (or `revertedAt`) means terminal.
    */
   finalizedAt?: Date;
+
+  /**
+   * Coins claims only: the host's top-up registration id (32 bytes, hex) the
+   * sale was settled from. Lets the watcher resume after an app restart.
+   */
+  topUpId?: string;
+
+  /**
+   * Set when the host's last word on the claim was `notClaimed` after the
+   * sale had already been recorded (a reorg took the coins away). The sale
+   * stays in History as reverted and is excluded from totals.
+   */
+  revertedAt?: Date;
+
+  /**
+   * Set when the host credited less than the cheque asked for. `amount` /
+   * `amountPlanck` hold what was actually credited; these hold the request.
+   */
+  requestedAmount?: string;
+  requestedAmountPlanck?: string;
 
   // Transaction type
   type: TransactionType;

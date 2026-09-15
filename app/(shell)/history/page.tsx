@@ -19,7 +19,7 @@ import { FEATURES } from "@/lib/config/features";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAccount } from "@/lib/web3";
-import { useSalesHistory, type SaleRecord } from "@/lib/storage";
+import { saleClaimState, useSalesHistory, type SaleRecord } from "@/lib/storage";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
 import { formatMoney } from "@/lib/utils/format";
 import { useAssetSymbol } from "@/lib/utils/asset-metadata";
@@ -226,6 +226,7 @@ export default function HistoryPage() {
   if (selectedSale) {
     const sale = selectedSale;
     const when = new Date(sale.timestamp);
+    const claimState = saleClaimState(sale);
     const lineTotal = (unitPrice: string, quantity: number) => {
       const value = Number(unitPrice) * quantity;
       return Number.isFinite(value) ? value.toFixed(2) : unitPrice;
@@ -239,12 +240,37 @@ export default function HistoryPage() {
           />
 
           <main className="flex-1 flex flex-col px-6 pb-6">
-            {/* Status — the success fill is theme-invariant, so its mark is static white */}
-            <div className="flex flex-col items-center pb-6">
-              <span className="size-14 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-3">
-                <ArrowDown className="size-6" aria-hidden />
+            {/* Status — status fills are theme-invariant, so the mark is static
+                white. Reverted claims take the error fill; a claim still
+                confirming, or one that settled short, says so underneath. */}
+            <div className="flex flex-col items-center pb-6 text-center">
+              <span
+                className={`size-14 rounded-full text-fg-static-white flex items-center justify-center mb-3 ${
+                  claimState === "reverted" ? "bg-status-error" : "bg-status-success"
+                }`}
+              >
+                {claimState === "reverted" ? (
+                  <X className="size-6" aria-hidden />
+                ) : (
+                  <ArrowDown className="size-6" aria-hidden />
+                )}
               </span>
-              <p className="text-heading-l text-fg-primary">Received</p>
+              <p className="text-heading-l text-fg-primary">
+                {claimState === "reverted" ? "Reverted" : "Received"}
+              </p>
+              {claimState === "confirming" && (
+                <p className="text-body-m text-fg-secondary mt-1">Confirming on chain…</p>
+              )}
+              {claimState === "partial" && sale.requestedAmount && (
+                <p className="text-body-m text-fg-warning mt-1">
+                  {formatMoney(sale.amount)} of the {formatMoney(sale.requestedAmount)} {symbol} requested arrived
+                </p>
+              )}
+              {claimState === "reverted" && (
+                <p className="text-body-m text-fg-secondary mt-1">
+                  The payment didn&apos;t complete on chain. Nothing was credited.
+                </p>
+              )}
             </div>
 
             <div className="border-t border-dashed mb-5" />
@@ -460,6 +486,15 @@ export default function HistoryPage() {
                           minute: "2-digit",
                           hour12: false,
                         });
+                        const state = saleClaimState(sale);
+                        const statusLine =
+                          state === "reverted"
+                            ? "Reverted"
+                            : state === "confirming"
+                              ? "Received · confirming"
+                              : state === "partial" && sale.requestedAmount
+                                ? `Received ${formatMoney(sale.amount)} of ${formatMoney(sale.requestedAmount)}`
+                                : "Received";
                         return (
                           <button
                             key={sale.saleId}
@@ -467,17 +502,28 @@ export default function HistoryPage() {
                             className="w-full flex items-center gap-3 px-2 py-2.5 rounded-medium text-left hover:bg-surface-container transition-colors"
                           >
                             <span className="size-11 flex items-center justify-center shrink-0">
-                              <ArrowDown className="size-5 text-fg-success" aria-hidden />
+                              {state === "reverted" ? (
+                                <X className="size-5 text-fg-error" aria-hidden />
+                              ) : (
+                                <ArrowDown
+                                  className={`size-5 ${state === "confirming" ? "text-fg-tertiary" : "text-fg-success"}`}
+                                  aria-hidden
+                                />
+                              )}
                             </span>
                             <span className="flex-1 min-w-0">
                               <span className="block text-label-l text-fg-primary">
                                 Order #{sale.saleId.slice(-4).toUpperCase()}
                               </span>
                               <span className="block text-body-m text-fg-tertiary">
-                                Received · {time}
+                                {statusLine} · {time}
                               </span>
                             </span>
-                            <span className="text-label-l font-mono text-fg-primary shrink-0">
+                            <span
+                              className={`text-label-l font-mono shrink-0 ${
+                                state === "reverted" ? "text-fg-tertiary line-through" : "text-fg-primary"
+                              }`}
+                            >
                               {formatMoney(sale.amount)} {symbol}
                             </span>
                           </button>

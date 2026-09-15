@@ -5,6 +5,7 @@ import { ServiceWorkerRegister } from "@/lib/components/service-worker-register"
 import { SentryTags } from "@/lib/components/sentry-tags";
 import { TestHook } from "@/lib/components/test-hook";
 import { HostThemeSync } from "@/lib/components/host-theme-sync";
+import { TopUpWatcherBoot } from "@/lib/components/topup-watcher-boot";
 import { fontVariablesClassName, THEME_INIT_SCRIPT } from "@/lib/fonts";
 import "./globals.css";
 
@@ -54,6 +55,7 @@ export default function RootLayout({
           <SentryTags />
           <TestHook />
           <HostThemeSync />
+          <TopUpWatcherBoot />
           <ReportJobProvider>
             {children}
           </ReportJobProvider>

@@ -57,6 +57,7 @@ import {
 } from "@/lib/payments/coinage";
 import { isHostPrinterAvailable, printHostDocument } from "@/lib/host/printing";
 import { publishNfcPaymentDeeplink, stopNfcEmitting } from "@/lib/host/nfc";
+import { watchTopUpFinality } from "@/lib/payments/coinage/topup-watcher";
 import { buildCustomerReceiptPrintDocument } from "@/lib/receipts/thermal-print";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
@@ -397,12 +398,13 @@ function TerminalPageInner() {
 
   usePaymentListener(listenerOptions);
 
-  // W3S Coinage completion: the host has already moved the bearer coins into
-  // the merchant coin set (paymentTopUp Coins) — the claim only resolves once
-  // its extrinsics are in-block, and the host owns the submission. There's no
-  // public sender and no inclusion block hash to track, so we record the sale
-  // against the merchant identity with an "anonymous" customer and stamp it
-  // finalized immediately (green check in History) rather than spinning.
+  // W3S Coinage completion: the host has moved the bearer coins into the
+  // merchant coin set (paymentTopUp Coins) and the claim is in a best-chain
+  // block. There's no public sender and no inclusion block hash to track, so
+  // the sale is recorded against the merchant identity with an "anonymous"
+  // customer — and, unless the host already reported it final, WITHOUT
+  // `finalizedAt`: a reorg can still shrink or undo the claim, so the
+  // background watcher follows the host's top-up id to its last word.
   const handleCoinsPaid = async (result: CoinagePaymentResult) => {
     journeyTracker.milestone("terminal-payment", "payment-detected");
     journeyTracker.addAttributes("terminal-payment", {
@@ -451,16 +453,25 @@ function TerminalPageInner() {
         blockNumber: 0,
         blockHash: result.paymentId,
         timestamp: new Date(),
-        // Coin claims confirm on the spot — the host already moved the coins
-        // in-block. Stamp finalized now so History shows the green check
-        // immediately (no finality spinner, unlike the standard pUSD flow).
-        finalizedAt: new Date(),
+        // Final only when the host said so (or the claim settled partially,
+        // which is final). Otherwise the watcher stamps it later.
+        finalizedAt: result.finalized ? new Date() : undefined,
+        topUpId: result.topUpId,
+        requestedAmount: result.partial ? result.requestedAmount : undefined,
+        requestedAmountPlanck: result.partial
+          ? amountToPlanck(result.requestedAmount, PUSD_DECIMALS).toString()
+          : undefined,
         type: "incoming",
         items: receiptItems.length > 0 ? receiptItems : undefined,
         tip: tipDecimal,
         note: note.trim() || undefined,
       });
       journeyTracker.milestone("terminal-payment", "sale-saved");
+      if (!result.finalized) {
+        // Fire-and-forget: survives this page unmounting, and is re-armed on
+        // the next launch for anything still confirming.
+        watchTopUpFinality({ saleId: result.paymentId, topUpIdHex: result.topUpId });
+      }
     } catch (err) {
       console.error("[Terminal] Failed to save coins sale:", err);
       captureError(err, { component: "terminal", phase: "save-sale-coins" }, {
@@ -1328,9 +1339,7 @@ function TerminalPageInner() {
                     : coinage.claimStage === "claiming"
                       ? "Moving the coins into your balance"
                       : "Handing the payment to the Polkadot app"}
-                  {coinage.claimAttempt > 1
-                    ? ` · attempt ${coinage.claimAttempt} of ${coinage.claimMaxAttempts}`
-                    : ""}
+                  {coinage.claimAttempt > 1 ? ` · retry ${coinage.claimAttempt - 1}` : ""}
                   . This can take a minute.
                 </p>
               )}

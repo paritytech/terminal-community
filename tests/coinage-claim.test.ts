@@ -6,10 +6,13 @@ import {
   NothingClaimedError,
   StatusInterruptedError,
   TOP_UP_ID_BYTES,
-  awaitTerminalTopUpStatus,
-  claimCoinsWithRetry,
+  awaitSettledTopUpStatus,
+  claimCoins,
   deriveTopUpId,
+  isFinalTopUpStatus,
   isRetryableTopUpError,
+  topUpIdFromHex,
+  topUpIdToHex,
   type ClaimHost,
   type TopUpStatusEvent,
 } from "@/lib/payments/coinage/claim";
@@ -17,7 +20,7 @@ import {
 const KEYS = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
 const AMOUNT = 12_500_000n; // 12.50 with 6 decimals
 const noSleep = async () => {};
-const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+const hex = topUpIdToHex;
 
 /**
  * A scripted host. `registrations[i]` is what the i-th `topUp` does (resolve,
@@ -26,7 +29,7 @@ const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "
  * with `{ interrupt: payload }` to simulate the host dropping it.
  */
 type Run = Array<TopUpStatusEvent | { interrupt: unknown }>;
-function scriptedHost(registrations: Array<undefined | Error>, runs: Run[]) {
+export function scriptedHost(registrations: Array<undefined | Error>, runs: Run[]) {
   const topUp = vi.fn(async (_amount: bigint, _keys: Uint8Array[], _id: Uint8Array) => {
     const step = registrations.shift();
     if (step instanceof Error) throw step;
@@ -36,8 +39,6 @@ function scriptedHost(registrations: Array<undefined | Error>, runs: Run[]) {
   const subscribeTopUpStatus = vi.fn((id: Uint8Array, onStatus: (s: TopUpStatusEvent) => void) => {
     subscribedIds.push(hex(id));
     const run = runs.shift() ?? [];
-    // Held in an object so the async loop below sees the handler registered
-    // after `subscribe` returns (a plain `let` narrows to `null` for TS).
     const handlers: { interrupt: ((payload: unknown) => void) | null } = { interrupt: null };
     let stopped = false;
     void (async () => {
@@ -65,8 +66,8 @@ function scriptedHost(registrations: Array<undefined | Error>, runs: Run[]) {
 
 const idFor = (attempt: number) => deriveTopUpId("pay-1234", attempt);
 
-describe("deriveTopUpId", () => {
-  it("is 32 bytes, deterministic, and distinct per attempt and per payment", () => {
+describe("top-up ids", () => {
+  it("are 32 bytes, deterministic, distinct per attempt and per payment", () => {
     const a1 = deriveTopUpId("pay-1234", 1);
     expect(a1).toHaveLength(TOP_UP_ID_BYTES);
     expect(hex(deriveTopUpId("pay-1234", 1))).toBe(hex(a1));
@@ -74,13 +75,20 @@ describe("deriveTopUpId", () => {
     expect(hex(deriveTopUpId("pay-9999", 1))).not.toBe(hex(a1));
     expect(() => deriveTopUpId("pay-1234", 0)).toThrow();
   });
+
+  it("round-trip through the hex stored on the sale record", () => {
+    const id = idFor(3);
+    expect(topUpIdFromHex(hex(id))).toEqual(id);
+    expect(topUpIdFromHex(`0x${hex(id)}`)).toEqual(id);
+    expect(() => topUpIdFromHex("abc")).toThrow();
+  });
 });
 
-describe("claimCoinsWithRetry (register + follow status)", () => {
-  it("registers once and resolves as claimed when the host reports claimed in a block", async () => {
+describe("claimCoins (register once, follow until the sale settles)", () => {
+  it("registers once and settles at the first claimed, reporting whether it was final", async () => {
     const h = scriptedHost([undefined], [[{ type: "detecting" }, { type: "claiming" }, { type: "claimed", finalized: false }]]);
     const statuses: string[] = [];
-    const outcome = await claimCoinsWithRetry({
+    const outcome = await claimCoins({
       host: h.host,
       amountPlanck: AMOUNT,
       keys: KEYS,
@@ -88,126 +96,105 @@ describe("claimCoinsWithRetry (register + follow status)", () => {
       sleep: noSleep,
       onStatus: (s) => statuses.push(s.type),
     });
-    expect(outcome).toMatchObject({ kind: "claimed", creditedPlanck: AMOUNT, requestedPlanck: AMOUNT });
+    expect(outcome).toMatchObject({ kind: "claimed", finalized: false, creditedPlanck: AMOUNT, requestedPlanck: AMOUNT });
     expect(hex(outcome.topUpId)).toBe(hex(idFor(1)));
     expect(h.topUp).toHaveBeenCalledTimes(1);
     expect(h.topUp).toHaveBeenCalledWith(AMOUNT, KEYS, idFor(1));
     expect(statuses).toEqual(["detecting", "claiming", "claimed"]);
-    // Nothing keeps listening once the claim is settled.
+    // The claim call stops listening once the sale is settled — finality is
+    // the watcher's job.
     expect(h.unsubscribed).toEqual([hex(idFor(1))]);
+  });
+
+  it("reports an already-finalized claim as such", async () => {
+    const h = scriptedHost([undefined], [[{ type: "claimed", finalized: true }]]);
+    const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
+    expect(outcome).toMatchObject({ kind: "claimed", finalized: true });
   });
 
   it("reports a partial credit as a result, not a failure", async () => {
     const h = scriptedHost([undefined], [[{ type: "claiming" }, { type: "claimedPartially", actualClaimed: 10_000_000n }]]);
-    const outcome = await claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
+    const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
     expect(outcome).toMatchObject({ kind: "partial", creditedPlanck: 10_000_000n, requestedPlanck: AMOUNT });
+  });
+
+  it("does not re-register on its own: notClaimed is a failure for the merchant to retry", async () => {
+    const h = scriptedHost([undefined], [[{ type: "detecting" }, { type: "notClaimed" }]]);
+    await expect(
+      claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep }),
+    ).rejects.toBeInstanceOf(NotClaimedError);
     expect(h.topUp).toHaveBeenCalledTimes(1);
   });
 
-  it("re-registers with a fresh id after notClaimed, and gives up with NotClaimedError when the attempts are used", async () => {
-    const h = scriptedHost(
-      [undefined, undefined, undefined],
-      [[{ type: "notClaimed" }], [{ type: "notClaimed" }], [{ type: "notClaimed" }]],
-    );
-    const retried: number[] = [];
-    await expect(
-      claimCoinsWithRetry({
-        host: h.host,
-        amountPlanck: AMOUNT,
-        keys: KEYS,
-        topUpId: idFor,
-        maxAttempts: 3,
-        sleep: noSleep,
-        onRetryableFailure: (attempt) => retried.push(attempt),
-      }),
-    ).rejects.toBeInstanceOf(NotClaimedError);
-    expect(h.topUp).toHaveBeenCalledTimes(3);
-    expect(h.subscribedIds).toEqual([hex(idFor(1)), hex(idFor(2)), hex(idFor(3))]);
-    expect(retried).toEqual([1, 2]);
-  });
-
-  it("succeeds on a later registration once the payer's coins are on chain", async () => {
-    const h = scriptedHost([undefined, undefined], [[{ type: "notClaimed" }], [{ type: "claimed", finalized: true }]]);
-    const outcome = await claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
-    expect(outcome.kind).toBe("claimed");
-    expect(hex(outcome.topUpId)).toBe(hex(idFor(2)));
-  });
-
-  it("continues the registration sequence from firstAttempt (manual retry)", async () => {
+  it("a manual retry registers under the next id", async () => {
     const h = scriptedHost([undefined], [[{ type: "claimed", finalized: false }]]);
-    const attempts: Array<[number, number, number]> = [];
-    await claimCoinsWithRetry({
-      host: h.host,
-      amountPlanck: AMOUNT,
-      keys: KEYS,
-      topUpId: idFor,
-      firstAttempt: 4,
-      sleep: noSleep,
-      onAttempt: (i, max, attempt) => attempts.push([i, max, attempt]),
-    });
-    expect(h.subscribedIds).toEqual([hex(idFor(4))]);
-    expect(attempts).toEqual([[1, 3, 4]]);
+    const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 2, sleep: noSleep });
+    expect(h.topUp).toHaveBeenCalledWith(AMOUNT, KEYS, idFor(2));
+    expect(hex(outcome.topUpId)).toBe(hex(idFor(2)));
   });
 
   it("follows an already-registered id when the host answers AlreadyExists", async () => {
     const h = scriptedHost([new PaymentTopUpErr.AlreadyExists()], [[{ type: "claimed", finalized: false }]]);
-    const outcome = await claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
+    const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
     expect(outcome.kind).toBe("claimed");
     expect(h.subscribedIds).toEqual([hex(idFor(1))]);
   });
 
-  it("follows the previous registration when the host answers SourceBusy", async () => {
-    // Registration 1 ends notClaimed but the host still considers the source
-    // busy when registration 2 arrives — so we follow registration 1's id.
-    const h = scriptedHost(
-      [undefined, new PaymentTopUpErr.SourceBusy()],
-      [[{ type: "notClaimed" }], [{ type: "claimed", finalized: false }]],
-    );
-    const outcome = await claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
+  it("follows the previous registration when a retry hits SourceBusy", async () => {
+    const h = scriptedHost([new PaymentTopUpErr.SourceBusy()], [[{ type: "claimed", finalized: false }]]);
+    const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 2, sleep: noSleep });
     expect(outcome.kind).toBe("claimed");
-    expect(h.subscribedIds).toEqual([hex(idFor(1)), hex(idFor(1))]);
+    expect(h.subscribedIds).toEqual([hex(idFor(1))]);
   });
 
-  it("re-registers when the host drops the status subscription", async () => {
+  it("re-registers the same id and re-subscribes when the host drops the status subscription", async () => {
     const h = scriptedHost(
-      [undefined, undefined],
-      [[{ type: "detecting" }, { interrupt: { name: "PaymentTopUpStatusErr::NotFound" } }], [{ type: "claimed", finalized: false }]],
+      [undefined, new PaymentTopUpErr.AlreadyExists()],
+      [[{ type: "detecting" }, { interrupt: { name: "PaymentTopUpStatusErr::Unknown" } }], [{ type: "claimed", finalized: false }]],
     );
-    const retried: unknown[] = [];
-    const outcome = await claimCoinsWithRetry({
+    const drops: unknown[] = [];
+    const outcome = await claimCoins({
       host: h.host,
       amountPlanck: AMOUNT,
       keys: KEYS,
       topUpId: idFor,
       sleep: noSleep,
-      onRetryableFailure: (_a, err) => retried.push(err),
+      onResubscribe: (_n, err) => drops.push(err),
     });
     expect(outcome.kind).toBe("claimed");
-    expect(retried[0]).toBeInstanceOf(StatusInterruptedError);
+    expect(drops[0]).toBeInstanceOf(StatusInterruptedError);
     expect(h.topUp).toHaveBeenCalledTimes(2);
+    expect(h.topUp.mock.calls.map((c) => hex(c[2]))).toEqual([hex(idFor(1)), hex(idFor(1))]);
+    expect(h.subscribedIds).toEqual([hex(idFor(1)), hex(idFor(1))]);
+  });
+
+  it("gives up re-subscribing after maxResubscribes", async () => {
+    const drop: Run = [{ interrupt: { name: "PaymentTopUpStatusErr::Unknown" } }];
+    const h = scriptedHost([undefined, undefined, undefined], [drop, drop, drop]);
+    await expect(
+      claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, maxResubscribes: 2, sleep: noSleep }),
+    ).rejects.toBeInstanceOf(StatusInterruptedError);
+    expect(h.subscribeTopUpStatus).toHaveBeenCalledTimes(3);
   });
 
   it("does not retry InvalidSource and never subscribes", async () => {
     const refusal = new PaymentTopUpErr.InvalidSource();
     const h = scriptedHost([refusal], []);
-    await expect(
-      claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep }),
-    ).rejects.toBe(refusal);
-    expect(h.topUp).toHaveBeenCalledTimes(1);
+    await expect(claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep })).rejects.toBe(refusal);
     expect(h.subscribeTopUpStatus).not.toHaveBeenCalled();
   });
 
   it("treats a partial claim that credited nothing as nothing claimed", async () => {
     const h = scriptedHost([undefined], [[{ type: "claimedPartially", actualClaimed: 0n }]]);
-    await expect(
-      claimCoinsWithRetry({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, maxAttempts: 1, sleep: noSleep }),
-    ).rejects.toBeInstanceOf(NothingClaimedError);
+    await expect(claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep })).rejects.toBeInstanceOf(
+      NothingClaimedError,
+    );
   });
 
   it("stops and unsubscribes when the sale is cancelled mid-claim", async () => {
     const h = scriptedHost([undefined], [[{ type: "detecting" }, { type: "detecting" }, { type: "detecting" }]]);
     const abort = new AbortController();
-    const pending = claimCoinsWithRetry({
+    const pending = claimCoins({
       host: h.host,
       amountPlanck: AMOUNT,
       keys: KEYS,
@@ -221,20 +208,26 @@ describe("claimCoinsWithRetry (register + follow status)", () => {
   });
 });
 
-describe("awaitTerminalTopUpStatus", () => {
-  it("rejects immediately when the signal is already aborted", async () => {
+describe("status helpers", () => {
+  it("only finalized claims, partial claims and notClaimed are final", () => {
+    expect(isFinalTopUpStatus({ type: "detecting" })).toBe(false);
+    expect(isFinalTopUpStatus({ type: "claiming" })).toBe(false);
+    expect(isFinalTopUpStatus({ type: "claimed", finalized: false })).toBe(false);
+    expect(isFinalTopUpStatus({ type: "claimed", finalized: true })).toBe(true);
+    expect(isFinalTopUpStatus({ type: "claimedPartially", actualClaimed: 1n })).toBe(true);
+    expect(isFinalTopUpStatus({ type: "notClaimed" })).toBe(true);
+  });
+
+  it("awaitSettledTopUpStatus rejects immediately when the signal is already aborted", async () => {
     const h = scriptedHost([], [[{ type: "claimed", finalized: true }]]);
     const abort = new AbortController();
     abort.abort();
-    await expect(awaitTerminalTopUpStatus(h.host, idFor(1), abort.signal)).rejects.toBeInstanceOf(ClaimCancelledError);
+    await expect(awaitSettledTopUpStatus(h.host, idFor(1), abort.signal)).rejects.toBeInstanceOf(ClaimCancelledError);
     expect(h.subscribeTopUpStatus).not.toHaveBeenCalled();
   });
-});
 
-describe("isRetryableTopUpError", () => {
-  it("only rules out the host's typed refusal and our own cancellation", () => {
+  it("isRetryableTopUpError only rules out the host's typed refusal and our own cancellation", () => {
     expect(isRetryableTopUpError(new PaymentTopUpErr.Unknown({ reason: "boom" }))).toBe(true);
-    expect(isRetryableTopUpError(new Error("bridge dropped"))).toBe(true);
     expect(isRetryableTopUpError(new PaymentTopUpErr.InvalidSource())).toBe(false);
     expect(isRetryableTopUpError(new ClaimCancelledError())).toBe(false);
   });
