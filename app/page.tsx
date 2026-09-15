@@ -21,20 +21,23 @@ export default function Home() {
   // There's no landing/splash step anymore. Inside the host the account is
   // auto-detected (lib/web3/components/providers/web3-provider.tsx →
   // HostAutoConnect); once it resolves the terminal is configured, so we go
-  // straight to the Home dashboard. `replace` keeps `/` out of history so the
-  // back button doesn't bounce the merchant onto a dead landing page.
+  // straight to Check out — the amount keypad is the first thing a merchant
+  // sees, taking a payment is one tap away. `replace` keeps `/` out of history
+  // so the back button doesn't bounce the merchant onto a dead landing page.
   useEffect(() => {
     if (account) {
       journeyTracker.milestone("page-load", "account-resolved");
       journeyTracker.complete("page-load");
-      router.replace("/home");
+      router.replace("/terminal");
     }
   }, [account, router]);
 
   // Until the host connection resolves we can't route anywhere useful, so we
   // show a minimal connecting state rather than the old "Select Items" splash.
+  // Page surface comes from the theme (body is bg-surface-main). The wordmark
+  // is set in the display style — Manrope, the system's display face.
   return (
-    <div className="min-h-screen bg-black flex flex-col">
+    <div className="min-h-dvh flex flex-col">
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
         {/* Polkadot Logo */}
         <div className="mb-8">
@@ -50,16 +53,13 @@ export default function Home() {
 
         {/* T3RMINAL Branding */}
         <div className="text-center space-y-4 mb-10">
-          <h1
-            data-testid="app-heading"
-            className="text-5xl font-bold text-white tracking-tight font-[family-name:var(--font-unbounded)]"
-          >
+          <h1 data-testid="app-heading" className="text-display-xl text-fg-primary">
             T3RMINAL
           </h1>
-          <p className="text-neutral-400 text-lg">Payment Terminal</p>
+          <p className="text-body-l text-fg-secondary">Payment Terminal</p>
         </div>
 
-        <p className="text-neutral-500 text-xs">Connecting to host…</p>
+        <p className="text-caption text-fg-tertiary">Connecting to host…</p>
       </main>
     </div>
   );

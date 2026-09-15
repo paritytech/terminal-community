@@ -59,19 +59,21 @@ test.describe('Terminal — POS keypad and QR generation', () => {
     ).toBeDisabled();
   });
 
-  test('review step shows total and note field before the QR', async ({ testHost }) => {
+  test('note is optional and lives on the amount screen', async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await selectMerchantMode(frame);
     await navigateToTerminal(testHost);
 
-    await enterAmount(frame, '5');
-    await frame.locator('[data-testid="btn-charge"]').click();
+    // No separate review step — the note field is tucked behind an "Add note"
+    // toggle right under the amount, and the field only renders once tapped.
+    await expect(frame.locator('[data-testid="sale-note"]')).toHaveCount(0);
+    await frame.locator('[data-testid="btn-add-note"]').click();
+    await frame.locator('[data-testid="sale-note"]').fill('Amazon Gift Card');
+    await expect(frame.locator('[data-testid="sale-note"]')).toHaveValue('Amazon Gift Card');
 
-    // Symbol comes from useAssetSymbol() → PUSD_SYMBOL ("CASH"), see lib/utils/asset-ids.ts
-    await expect(
-      frame.locator('[data-testid="review-total"]'),
-    ).toHaveText('5.00 CASH');
-    await expect(frame.locator('[data-testid="review-note"]')).toBeVisible();
+    // The keypad and Charge are still on the same screen.
+    await enterAmount(frame, '5');
+    await expect(frame.locator('[data-testid="btn-charge"]')).toHaveText(/Charge 5\.00/);
   });
 
   test('generates QR code and shows waiting state', async ({ testHost }) => {
@@ -79,10 +81,9 @@ test.describe('Terminal — POS keypad and QR generation', () => {
     await selectMerchantMode(frame);
     await navigateToTerminal(testHost);
 
-    // Enter an amount, charge, then confirm the review step
+    // Enter an amount and charge — that arms the QR directly (no review step)
     await enterAmount(frame, '5');
     await frame.locator('[data-testid="btn-charge"]').click();
-    await frame.locator('[data-testid="btn-generate-qr"]').click();
 
     // Should transition to QR / waiting state
     await expect(

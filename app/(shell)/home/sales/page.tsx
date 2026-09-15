@@ -3,7 +3,9 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
+import { SubpageHeader } from "@/components/subpage-header";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSalesHistory, type SaleRecord } from "@/lib/storage";
 import { formatAmountFromPlanck } from "@/lib/utils/format";
 import { PUSD_DECIMALS } from "@/lib/utils/asset-ids";
@@ -36,6 +38,10 @@ function startOfWeek(now: Date): Date {
  * Sales dashboard, opened from the Home "Sales" tile. All figures are computed
  * from the local sale records (same source as History): incoming sales only,
  * summed in exact planck bigints and formatted once for display.
+ *
+ * Design system: stat cards are container surfaces with shadow-1; every
+ * figure is Martian Mono; the chart's bars use the illustration fills (there
+ * is no chart palette in the token set — see the gap register).
  */
 export default function SalesPage() {
   const router = useRouter();
@@ -154,42 +160,40 @@ export default function SalesPage() {
   }, [view, stats, currentYear]);
 
   const maxValue = chart.values.reduce((max, v) => (v > max ? v : max), 0n);
-  const dim = isLoading ? "opacity-40" : "";
+  const dim = isLoading ? "opacity-50" : "";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-        {/* Header */}
-        <header className="flex items-center justify-between px-4 py-4">
-          <button onClick={() => router.back()} className="p-2" aria-label="Back to home">
-            <ArrowLeft className="w-6 h-6 text-white" />
-          </button>
-          <span className="text-white text-lg font-semibold">Sales</span>
-          <div className="w-10" />
-        </header>
+        <SubpageHeader title="Sales" onBack={() => router.back()} backLabel="Back to home" />
 
         <main className={`flex flex-col gap-3 px-4 pb-6 ${dim}`}>
           {/* Stat cards */}
           <div className="grid grid-cols-2 gap-3">
             {/* Transactions — links to the full list in History */}
-            <Link href="/history" className="bg-neutral-900 rounded-2xl p-4 hover:bg-neutral-800 transition">
+            <Link
+              href="/history"
+              className="bg-surface-container rounded-container shadow-1 p-4 hover:bg-selection-container-hover transition-colors"
+            >
               <div className="flex items-center justify-between mb-2">
-                <span className="flex items-center gap-2 text-neutral-300 text-sm">
-                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                <span className="flex items-center gap-2 text-body-m text-fg-secondary">
+                  <span className="size-2 rounded-full bg-status-success" aria-hidden />
                   Transactions
                 </span>
-                <ChevronRight className="w-4 h-4 text-neutral-500" />
+                <ChevronRight className="size-4 text-fg-tertiary" aria-hidden />
               </div>
-              <p data-testid="sales-transactions" className="text-white text-3xl font-bold">{stats.count}</p>
+              <p data-testid="sales-transactions" className="text-display-l font-mono text-fg-primary">
+                {stats.count}
+              </p>
             </Link>
 
             {/* Refunds — always 0 until refunds exist in the system */}
-            <div className="bg-neutral-900 rounded-2xl p-4">
+            <div className="bg-surface-container rounded-container shadow-1 p-4">
               <div className="flex items-center gap-2 mb-2">
-                <span className="w-2 h-2 rounded-full bg-orange-500" />
-                <span className="text-neutral-300 text-sm">Refunds</span>
+                <span className="size-2 rounded-full bg-status-warning" aria-hidden />
+                <span className="text-body-m text-fg-secondary">Refunds</span>
               </div>
-              <p className="text-white text-3xl font-bold">0</p>
+              <p className="text-display-l font-mono text-fg-primary">0</p>
             </div>
 
             <StatCard label="Today" value={money(stats.today)} unit={symbol} />
@@ -203,37 +207,31 @@ export default function SalesPage() {
           </div>
 
           {/* Chart card — total + bars at monthly/weekly/daily granularity */}
-          <div className="bg-neutral-900 rounded-2xl p-4">
-            <div className="mb-1">
-              <span className="text-neutral-300 text-sm">{chart.title}</span>
-            </div>
-            <p data-testid="sales-year-total" className="mb-4">
-              <span className="text-white text-3xl font-bold tracking-tight">{money(chart.total)}</span>
-              <span className="text-neutral-400 text-sm font-semibold ml-2">{symbol}</span>
+          <div className="bg-surface-container rounded-container shadow-1 p-4">
+            <p className="text-body-m text-fg-secondary mb-1">{chart.title}</p>
+            <p data-testid="sales-year-total" className="mb-4 flex items-baseline gap-2">
+              <span className="text-display-l font-mono text-fg-primary">{money(chart.total)}</span>
+              <span className="text-label-m text-fg-secondary">{symbol}</span>
             </p>
 
-            {/* Granularity switch */}
-            <div className="flex bg-neutral-800 rounded-lg p-1 mb-5 w-fit">
-              {([
-                ["months", "Months"],
-                ["weeks", "Weeks"],
-                ["days", "Days"],
-              ] as [ChartView, string][]).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => { setView(key); setActiveBar(null); }}
-                  className={`px-3 py-1 rounded-md text-sm font-medium transition ${
-                    view === key
-                      ? "bg-neutral-600 text-white"
-                      : "text-neutral-400 hover:text-neutral-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* Granularity — tabs with a line indicator, never a filled tray */}
+            <Tabs
+              value={view}
+              onValueChange={(next) => {
+                setView(next as ChartView);
+                setActiveBar(null);
+              }}
+              className="mb-5"
+            >
+              <TabsList variant="line">
+                <TabsTrigger value="months">Months</TabsTrigger>
+                <TabsTrigger value="weeks">Weeks</TabsTrigger>
+                <TabsTrigger value="days">Days</TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-            {/* Bars — flat dash for empty buckets, the current bucket in blue */}
+            {/* Bars — flat dash for empty buckets, the current bucket in the
+                dark illustration fill, the rest muted */}
             <div
               className="grid gap-1.5 items-end h-28"
               style={{ gridTemplateColumns: `repeat(${chart.values.length}, minmax(0, 1fr))` }}
@@ -244,26 +242,32 @@ export default function SalesPage() {
                   : 0;
                 const height = value > 0n ? Math.max(10, Math.round(ratio * 100)) : 4;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={i}
+                    aria-label={`${chart.labels[i]}: ${money(value)} ${symbol}`}
+                    aria-pressed={activeBar === i}
                     className="group relative flex flex-col items-center justify-end h-full cursor-pointer"
                     onClick={() => setActiveBar(activeBar === i ? null : i)}
                   >
-                    {/* Amount tooltip — on hover (mouse) or tap (touch) */}
-                    <div
-                      className={`pointer-events-none absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10 rounded-md bg-neutral-700 px-2 py-1 text-[10px] font-semibold text-white whitespace-nowrap shadow-lg ${
+                    {/* Amount tooltip — on hover (mouse) or tap (touch); sits
+                        on the inverted surface like every tooltip */}
+                    <span
+                      className={`pointer-events-none absolute bottom-full mb-1.5 left-1/2 -translate-x-1/2 z-10 rounded-small bg-surface-container-inverted px-2 py-1 text-label-s font-mono text-fg-primary-inverted whitespace-nowrap shadow-2 ${
                         activeBar === i ? "" : "hidden group-hover:block"
                       }`}
                     >
                       {money(value)} {symbol}
-                    </div>
-                    <div
-                      className={`w-full rounded-md ${
-                        i === chart.highlightIndex ? "bg-[#4353ff]" : "bg-neutral-500"
+                    </span>
+                    <span
+                      className={`w-full rounded-small transition-colors ${
+                        i === chart.highlightIndex
+                          ? "bg-illustration-dark"
+                          : "bg-illustration-dark-muted group-hover:bg-illustration-dark"
                       }`}
                       style={{ height: `${height}%` }}
                     />
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -274,8 +278,8 @@ export default function SalesPage() {
               {chart.labels.map((label, i) => (
                 <span
                   key={`${label}-${i}`}
-                  className={`text-[9px] text-center truncate ${
-                    i === chart.highlightIndex ? "text-white font-semibold" : "text-neutral-500"
+                  className={`text-overline text-center truncate ${
+                    i === chart.highlightIndex ? "text-fg-primary" : "text-fg-tertiary"
                   }`}
                 >
                   {label}
@@ -291,11 +295,11 @@ export default function SalesPage() {
 
 function StatCard({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
-    <div className="bg-neutral-900 rounded-2xl p-4">
-      <p className="text-neutral-300 text-sm mb-2">{label}</p>
-      <p className="text-white">
-        <span className="text-3xl font-bold tracking-tight">{value}</span>
-        <span className="text-neutral-400 text-xs font-semibold ml-1.5">{unit}</span>
+    <div className="bg-surface-container rounded-container shadow-1 p-4">
+      <p className="text-body-m text-fg-secondary mb-2">{label}</p>
+      <p className="flex items-baseline gap-1.5">
+        <span className="text-display-l font-mono text-fg-primary">{value}</span>
+        <span className="text-label-s text-fg-secondary">{unit}</span>
       </p>
     </div>
   );

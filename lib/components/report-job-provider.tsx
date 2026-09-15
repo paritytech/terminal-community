@@ -123,18 +123,21 @@ export function ReportJobProvider({ children }: { children: React.ReactNode }) {
       {children}
       {(activeJob || toast) && (
         <div className="fixed inset-x-0 top-0 z-[80] flex justify-center px-4 pt-[env(safe-area-inset-top)] pointer-events-none">
+          {/* Toast: progress rides on the inverted surface (like a tooltip),
+              outcomes on the theme-invariant status fills with static white
+              text. Depth is shadow-2, not a border. */}
           <div
-            className={`mt-2 max-w-md w-full rounded-xl border px-4 py-3 text-sm flex items-center gap-2 shadow-lg ${
+            className={`mt-2 max-w-md w-full rounded-nested px-4 py-3 text-label-m flex items-center gap-2 shadow-2 ${
               activeJob
-                ? "bg-neutral-900 border-neutral-700 text-white"
+                ? "bg-surface-container-inverted text-fg-primary-inverted"
                 : toast?.tone === "success"
-                  ? "bg-green-900/90 border-green-700 text-green-100"
-                  : "bg-red-900/90 border-red-700 text-red-100"
+                  ? "bg-status-success text-fg-static-white"
+                  : "bg-status-error text-fg-static-white"
             }`}
           >
             {activeJob ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <Loader2 className="size-4 animate-spin shrink-0" aria-hidden />
                 <span className="truncate">
                   {activeJob.mode === "finalize" ? "Closing" : "Saving"} {activeJob.label}
                   {report.phaseLabel ? ` — ${report.phaseLabel}` : "…"}
@@ -142,12 +145,12 @@ export function ReportJobProvider({ children }: { children: React.ReactNode }) {
               </>
             ) : toast?.tone === "success" ? (
               <>
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <CheckCircle2 className="size-4 shrink-0" aria-hidden />
                 <span className="truncate">{toast.text}</span>
               </>
             ) : (
               <>
-                <AlertCircle className="w-4 h-4 shrink-0" />
+                <AlertCircle className="size-4 shrink-0" aria-hidden />
                 <span className="truncate">{toast?.text}</span>
               </>
             )}

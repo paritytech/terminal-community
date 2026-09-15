@@ -40,6 +40,10 @@ test.describe('Daily reports page', () => {
     const frame = await waitForAppReady(testHost);
     await selectMerchantMode(frame);
 
+    // The app lands on Check out, so open the Home tab first.
+    await frame.getByRole('link', { name: 'Home', exact: true }).click();
+    await frame.locator('[data-testid="todays-income"]').waitFor();
+
     // CSV export lives on the Home dashboard now — the Export CSV tile opens
     // the report-generation screen. (The legacy Settings entry was removed in
     // the Settings redesign; /settings/export is still routable by URL.)

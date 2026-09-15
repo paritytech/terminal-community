@@ -9,3 +9,4 @@ export {
   PASEO_ASSET_HUB_GENESIS,
 } from "./provider"
 export { getHostAccounts, subscribeHostAccounts, type HostAccount } from "./accounts"
+export { subscribeHostTheme, hostThemeToChoice, type HostTheme } from "./theme"

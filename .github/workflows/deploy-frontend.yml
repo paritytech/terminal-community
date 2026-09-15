@@ -2,7 +2,7 @@ name: Deploy Frontend
 
 # Single-job build + deploy with bulletin-deploy and a retry wrapper.
 # Both push-to-main and PRs deploy to a live, resolvable domain — main to the
-# fixed `t3rminal.paseo`, PRs to a `pr<N>-` prefixed preview. The only difference:
+# fixed `terminal.paseo`, PRs to a `pr<N>-` prefixed preview. The only difference:
 # `--publish` is passed ONLY on main. `--publish` registers the full Polkadot
 # product manifest (icon/displayName/app.<domain> subname) — i.e. it PINS the
 # bundle into the app's product registry. Without it the domain still resolves
@@ -49,7 +49,15 @@ jobs:
         # imports via rollup. The fix npm itself recommends in the error
         # message: delete the lockfile and let `npm install` resolve fresh
         # for this platform.
+        #
+        # Because the lockfile is gone, this resolves whatever the registry
+        # has today. The npm 10.9.x bundled with Node 22 has an arborist bug
+        # in peer-dependency resolution ("Cannot read properties of null
+        # (reading 'edgesOut')") that newer versions of our dependencies
+        # trigger; npm 11 resolves the same tree fine. Upgrade npm first.
         run: |
+          npm install -g npm@11
+          npm --version
           rm -f package-lock.json
           npm install --no-audit --no-fund
 
@@ -98,15 +106,13 @@ jobs:
           timeout_minutes: 15
           max_attempts: 3
           retry_wait_seconds: 30
-          # PR previews use a `pr<N>-` prefix on the production `t3rminal`
-          # base (the legacy `t3rminal01` base collided with a domain already
-          # owned by another key).
+          # PR previews use a `pr<N>-` prefix on the production `terminal`
           #
           # Both targets deploy to a live, resolvable domain. Only main passes
           # `--publish` — that pins the bundle as a Polkadot product (manifest +
           # app.<domain> subname). PR previews skip it: still live/scannable, just
           # not pinned in the app's product registry, and they never touch the
-          # production `t3rminal.paseo` domain.
+          # production `terminal.paseo` domain.
           #
           # TLD: paseo-next-v2's dotNS uses `.paseo` (bulletin-deploy ≥ 0.15
           # rejects `.dot` names on this env), and the Polkadot nightly apps
@@ -114,15 +120,15 @@ jobs:
           #
           # BULLETIN_DEPLOY_DOMAIN is exported so `bulletin-deploy.config.ts`
           # sees the same value the CLI is invoked with — without this the
-          # config's hardcoded default ("t3rminal.paseo") would fight a
+          # config's hardcoded default ("terminal.paseo") would fight a
           # PR-preview deploy and the manifest step aborts.
           command: |
             if [ "${{ github.event_name }}" = "pull_request" ]; then
-              DOMAIN="pr${{ github.event.pull_request.number }}-t3rminal.paseo"
+              DOMAIN="pr${{ github.event.pull_request.number }}-terminal.paseo"
               export BULLETIN_DEPLOY_DOMAIN="$DOMAIN"
               bulletin-deploy --env paseo-next-v2 './out' "$DOMAIN"
             else
-              DOMAIN="t3rminal.paseo"
+              DOMAIN="terminal.paseo"
               export BULLETIN_DEPLOY_DOMAIN="$DOMAIN"
               bulletin-deploy --publish --env paseo-next-v2 './out' "$DOMAIN"
             fi
@@ -140,9 +146,9 @@ jobs:
         # once the pointer is right. Signed by the same owner as the deploy.
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DOMAIN="pr${{ github.event.pull_request.number }}-t3rminal.paseo"
+            DOMAIN="pr${{ github.event.pull_request.number }}-terminal.paseo"
           else
-            DOMAIN="t3rminal.paseo"
+            DOMAIN="terminal.paseo"
           fi
           node scripts/dotns-set-resolver.mjs "$DOMAIN" --apply
         env:
@@ -159,7 +165,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const domain = `pr${{ github.event.pull_request.number }}-t3rminal`;
+            const domain = `pr${{ github.event.pull_request.number }}-terminal`;
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             await github.rest.issues.createComment({
               owner: context.repo.owner,

@@ -1,6 +1,4 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
+// `cn` lives in lib/cn.ts (the Polkadot design system's tailwind-merge with
+// the theme's class groups registered). Re-exported here so the one legacy
+// import path keeps working; new code imports "@/lib/cn" directly.
+export { cn } from "./cn";

@@ -4,15 +4,20 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Check,
   Image as ImageIcon,
+  Loader2,
   Paperclip,
   ScrollText,
   Trash2,
   X,
 } from "lucide-react";
 import * as Sentry from "@sentry/nextjs";
+import { SubpageHeader, iconButtonClass } from "@/components/subpage-header";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { formatLogsAsText } from "@/lib/debug/log-capture";
 
 /**
@@ -36,6 +41,11 @@ type SendState = "form" | "sending" | "error" | "success";
 function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
 }
+
+// The screen's one main action, wherever the flow is: primary pill, full
+// width because it sits in the bottom slot.
+const PRIMARY_PILL =
+  "mt-8 w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100";
 
 export default function ReportIssuePage() {
   const router = useRouter();
@@ -104,8 +114,8 @@ export default function ReportIssuePage() {
   if (sendState === "sending") {
     return (
       <FullScreen>
-        <div className="w-10 h-10 rounded-full border-2 border-neutral-700 border-t-white animate-spin mb-6" />
-        <p className="text-white text-2xl font-semibold">Sending…</p>
+        <Loader2 className="size-8 animate-spin text-fg-secondary mb-6" aria-hidden />
+        <p className="text-heading-l text-fg-primary">Sending…</p>
       </FullScreen>
     );
   }
@@ -113,21 +123,18 @@ export default function ReportIssuePage() {
   if (sendState === "error") {
     return (
       <FullScreen onClose={() => setSendState("form")}>
-        <div className="w-14 h-14 rounded-full bg-red-500 flex items-center justify-center mb-6">
-          <X className="w-7 h-7 text-white" strokeWidth={3} />
+        <div className="size-14 rounded-full bg-status-error text-fg-static-white flex items-center justify-center mb-6">
+          <X className="size-6" strokeWidth={3} aria-hidden />
         </div>
-        <p className="text-white text-2xl font-semibold text-center mb-10">
+        <p className="text-heading-l text-fg-primary text-center mb-10">
           Couldn&apos;t send.
           <br />
           Try again
         </p>
         <div className="flex-1" />
-        <button
-          onClick={handleSend}
-          className="w-full bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-2xl transition"
-        >
+        <Button onClick={handleSend} className={PRIMARY_PILL}>
           Retry
-        </button>
+        </Button>
       </FullScreen>
     );
   }
@@ -135,19 +142,16 @@ export default function ReportIssuePage() {
   if (sendState === "success") {
     return (
       <FullScreen onClose={() => router.push("/settings")}>
-        <div className="w-14 h-14 rounded-full bg-green-500 flex items-center justify-center mb-6">
-          <Check className="w-7 h-7 text-white" strokeWidth={3} />
+        <div className="size-14 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-6">
+          <Check className="size-6" strokeWidth={3} aria-hidden />
         </div>
-        <p className="text-white text-2xl font-semibold text-center mb-10">
+        <p className="text-heading-l text-fg-primary text-center mb-10">
           Thanks! for your feedback we&apos;ll look into it
         </p>
         <div className="flex-1" />
-        <button
-          onClick={() => router.push("/settings")}
-          className="w-full bg-white hover:bg-neutral-100 text-black font-semibold py-4 rounded-2xl transition"
-        >
+        <Button onClick={() => router.push("/settings")} className={PRIMARY_PILL}>
           Done
-        </button>
+        </Button>
       </FullScreen>
     );
   }
@@ -158,45 +162,49 @@ export default function ReportIssuePage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
         {/* Header — logs shortcut on the right */}
-        <header className="flex items-center justify-between px-4 py-4 shrink-0">
-          <Link href="/settings" className="p-2" aria-label="Back to settings">
-            <ArrowLeft className="w-6 h-6 text-white" />
-          </Link>
-          <span className="text-white text-lg font-semibold">Report a problem</span>
-          <Link href="/settings/logs" className="p-2" aria-label="View logs">
-            <ScrollText className="w-6 h-6 text-white" />
-          </Link>
-        </header>
+        <SubpageHeader
+          title="Report a problem"
+          backHref="/settings"
+          backLabel="Back to settings"
+          action={
+            <Link href="/settings/logs" className={iconButtonClass} aria-label="View logs">
+              <ScrollText className="size-6" />
+            </Link>
+          }
+        />
 
         <main className="flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pb-6">
-          <h1 className="text-white text-2xl font-bold leading-snug">Describe what happened</h1>
-          <p className="text-neutral-400 text-sm mb-4">
+          <h1 className="text-heading-l text-fg-primary">Describe what happened</h1>
+          <p className="text-body-m text-fg-secondary mb-4">
             What were you doing when it went wrong?
           </p>
 
-          {/* Description */}
-          <div className="rounded-2xl border border-neutral-800 bg-neutral-950 px-4 py-3">
-            <div className="flex justify-between text-neutral-500 text-xs mb-1">
-              <span>Tell us what happened…</span>
-              <span>
+          {/* Description — a control draws its own hairline */}
+          <div className="flex flex-col gap-2">
+            <div className="flex justify-between items-baseline">
+              <Label htmlFor="report-description" className="text-label-m text-fg-secondary">
+                Tell us what happened…
+              </Label>
+              <span className="text-caption font-mono text-fg-tertiary">
                 {description.length}/{MAX_DESCRIPTION}
               </span>
             </div>
-            <textarea
+            <Textarea
+              id="report-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               maxLength={MAX_DESCRIPTION}
               rows={5}
-              className="w-full bg-transparent text-white text-base outline-none resize-none placeholder:text-neutral-600"
+              className="resize-none"
             />
           </div>
 
-          {/* Screenshots */}
-          <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-4">
+          {/* Screenshots — a container; attachments sit on the nested step */}
+          <div className="mt-4 rounded-nested bg-surface-container p-4">
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
-                <p className="text-white font-semibold">Add screenshot</p>
-                <p className="text-neutral-400 text-sm mt-0.5">
+                <p className="text-label-l text-fg-primary">Add screenshot</p>
+                <p className="text-body-m text-fg-secondary mt-0.5">
                   Add a screenshot to help us understand (PNG or JPG, max 10 MB)
                 </p>
               </div>
@@ -204,9 +212,9 @@ export default function ReportIssuePage() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 aria-label="Attach screenshot"
-                className="shrink-0 p-2 text-neutral-300 hover:text-white transition"
+                className={`${iconButtonClass} shrink-0 text-fg-secondary`}
               >
-                <Paperclip className="w-5 h-5" />
+                <Paperclip className="size-5" />
               </button>
               <input
                 ref={fileInputRef}
@@ -226,12 +234,12 @@ export default function ReportIssuePage() {
                 {attachments.map(({ file, id }) => (
                   <div
                     key={id}
-                    className="flex items-center gap-3 rounded-xl bg-neutral-900 px-3 py-2.5"
+                    className="flex items-center gap-3 rounded-small bg-surface-nested px-3 py-2.5"
                   >
-                    <ImageIcon className="w-5 h-5 text-neutral-400 shrink-0" />
+                    <ImageIcon className="size-5 text-fg-secondary shrink-0" aria-hidden />
                     <div className="flex-1 min-w-0">
-                      <p className="text-white text-sm truncate">{file.name}</p>
-                      <p className="text-neutral-500 text-xs">{formatSize(file.size)}</p>
+                      <p className="text-body-m text-fg-primary truncate">{file.name}</p>
+                      <p className="text-caption text-fg-tertiary">{formatSize(file.size)}</p>
                     </div>
                     <button
                       type="button"
@@ -239,47 +247,44 @@ export default function ReportIssuePage() {
                         setAttachments((prev) => prev.filter((a) => a.id !== id))
                       }
                       aria-label={`Remove ${file.name}`}
-                      className="shrink-0 text-red-500 hover:text-red-400 transition"
+                      className="shrink-0 rounded-full p-1.5 text-fg-error hover:bg-action-error transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="size-4" />
                     </button>
                   </div>
                 ))}
               </div>
             )}
-            {fileError && <p className="text-red-400 text-xs mt-2">{fileError}</p>}
+            {fileError && <p className="text-body-s text-fg-error mt-2">{fileError}</p>}
           </div>
 
           {/* Technical details */}
-          <button
-            type="button"
-            onClick={() => setIncludeTechnical((v) => !v)}
-            className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-950 p-4 flex items-start gap-3 text-left"
-          >
+          <div className="mt-4 rounded-nested bg-surface-container p-4 flex items-start gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-white font-semibold">Include technical details</p>
-              <p className="text-neutral-400 text-sm mt-0.5">
+              <Label htmlFor="include-technical" className="text-label-l text-fg-primary">
+                Include technical details
+              </Label>
+              <p className="text-body-m text-fg-secondary mt-0.5">
                 Helps us find the problem faster. No personal data is shared
               </p>
             </div>
-            <span
-              className={`shrink-0 w-6 h-6 rounded-md border flex items-center justify-center transition ${
-                includeTechnical ? "bg-white border-white" : "border-neutral-600"
-              }`}
-            >
-              {includeTechnical && <Check className="w-4 h-4 text-black" strokeWidth={3} />}
-            </span>
-          </button>
+            <Checkbox
+              id="include-technical"
+              checked={includeTechnical}
+              onCheckedChange={(value) => setIncludeTechnical(value === true)}
+              className="mt-1 size-5 shrink-0"
+            />
+          </div>
 
           <div className="flex-1" />
-          <button
+          <Button
             type="button"
             onClick={handleSend}
             disabled={description.trim() === ""}
-            className="mt-8 w-full bg-white hover:bg-neutral-100 disabled:bg-neutral-900 disabled:text-neutral-600 text-black font-semibold py-4 rounded-2xl transition"
+            className={PRIMARY_PILL}
           >
             Send
-          </button>
+          </Button>
         </main>
       </div>
     </div>
@@ -296,13 +301,7 @@ function FullScreen({
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
-        <header className="flex items-center px-4 py-4 shrink-0">
-          {onClose && (
-            <button onClick={onClose} className="p-2" aria-label="Close">
-              <X className="w-6 h-6 text-white" />
-            </button>
-          )}
-        </header>
+        <SubpageHeader close onBack={onClose} backLabel="Close" />
         <main className="flex-1 flex flex-col items-center justify-center px-6 pb-10">
           {children}
         </main>

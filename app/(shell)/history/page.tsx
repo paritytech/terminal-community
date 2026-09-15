@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import {
   ArrowDown,
-  ArrowLeft,
   Download,
   Loader2,
   Printer,
@@ -14,6 +13,10 @@ import {
   X,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { ScreenHeader } from "@/components/screen-header";
+import { SubpageHeader, iconButtonClass } from "@/components/subpage-header";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useAccount } from "@/lib/web3";
 import { useSalesHistory, type SaleRecord } from "@/lib/storage";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
@@ -71,8 +74,8 @@ export default function HistoryPage() {
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
           <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
             <div className="text-center space-y-3 w-full">
-              <h1 className="text-2xl font-semibold text-white">Welcome</h1>
-              <p className="text-neutral-500 text-sm">Connecting to host…</p>
+              <h1 className="text-heading-l text-fg-primary">Welcome</h1>
+              <p className="text-body-m text-fg-tertiary">Connecting to host…</p>
             </div>
           </main>
         </div>
@@ -161,44 +164,52 @@ export default function HistoryPage() {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-          <header className="flex items-center justify-between px-4 py-4">
-            <button
-              onClick={() => { setShowReceipt(false); setSvgReceipt(null); setPrintMessage(null); }}
-              className="p-2"
-              aria-label="Back to transaction"
-            >
-              <ArrowLeft className="w-6 h-6 text-white" />
-            </button>
-            <span className="text-white font-medium">Record #{selectedSale.saleId.slice(-4).toUpperCase()}</span>
-            <button onClick={() => handleDownloadReceipt(selectedSale)} className="p-2" aria-label="Download receipt">
-              <Download className="w-6 h-6 text-white" />
-            </button>
-          </header>
+          <SubpageHeader
+            title={`Record #${selectedSale.saleId.slice(-4).toUpperCase()}`}
+            onBack={() => { setShowReceipt(false); setSvgReceipt(null); setPrintMessage(null); }}
+            backLabel="Back to transaction"
+            action={
+              <button
+                onClick={() => handleDownloadReceipt(selectedSale)}
+                className={iconButtonClass}
+                aria-label="Download receipt"
+              >
+                <Download className="size-6" />
+              </button>
+            }
+          />
 
           <main className="flex-1 flex flex-col px-6 py-4 overflow-auto">
+            {/* The receipt SVG paints its own paper and ink — only clip its
+                corners. The skeleton is a container surface. */}
             {svgReceipt ? (
-              <div className="bg-white rounded-xl p-4 overflow-hidden">
+              <div className="rounded-nested overflow-hidden">
                 <div dangerouslySetInnerHTML={{ __html: svgReceipt }} />
               </div>
             ) : (
-              <div className="bg-white rounded-xl h-72 animate-pulse" />
+              <div className="bg-surface-container rounded-nested h-72 animate-pulse" />
             )}
 
             {printerAvailable && (
-              <button
+              <Button
+                variant="secondary"
                 onClick={() => handlePrintReceipt(selectedSale)}
                 disabled={isPrintingReceipt}
-                className="mt-4 w-full bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-3.5 rounded-xl transition flex items-center justify-center gap-2 disabled:opacity-50"
+                className="mt-4 w-full h-auto py-3.5 text-label-m"
               >
-                {isPrintingReceipt ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
+                {isPrintingReceipt ? (
+                  <Loader2 className="size-5 animate-spin" aria-hidden />
+                ) : (
+                  <Printer className="size-5" aria-hidden />
+                )}
                 Print
-              </button>
+              </Button>
             )}
             {printMessage && (
-              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+              <div className={`mt-3 rounded-nested px-3 py-2 text-body-s ${
                 printMessage.tone === "success"
-                  ? "bg-green-900/30 border-green-800 text-green-400"
-                  : "bg-red-900/30 border-red-800 text-red-400"
+                  ? "bg-surface-nested text-fg-success"
+                  : "bg-action-error text-fg-error"
               }`}>
                 {printMessage.text}
               </div>
@@ -221,35 +232,30 @@ export default function HistoryPage() {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div className="flex-1 flex flex-col max-w-md mx-auto w-full">
-          <header className="flex items-center px-4 py-4">
-            <button
-              onClick={() => { setSelectedSale(null); setActionNote(null); }}
-              className="p-2"
-              aria-label="Back to history"
-            >
-              <ArrowLeft className="w-6 h-6 text-white" />
-            </button>
-          </header>
+          <SubpageHeader
+            onBack={() => { setSelectedSale(null); setActionNote(null); }}
+            backLabel="Back to history"
+          />
 
           <main className="flex-1 flex flex-col px-6 pb-6">
-            {/* Status */}
+            {/* Status — the success fill is theme-invariant, so its mark is static white */}
             <div className="flex flex-col items-center pb-6">
-              <span className="w-14 h-14 rounded-full bg-green-500 flex items-center justify-center mb-3">
-                <ArrowDown className="w-7 h-7 text-white" />
+              <span className="size-14 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-3">
+                <ArrowDown className="size-6" aria-hidden />
               </span>
-              <p className="text-white text-xl font-semibold">Received</p>
+              <p className="text-heading-l text-fg-primary">Received</p>
             </div>
 
-            <div className="border-t border-dashed border-neutral-800 mb-5" />
+            <div className="border-t border-dashed mb-5" />
 
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-1">
-              <span className="text-white text-5xl font-bold tracking-tight break-all">
+              <span className="text-display-xl font-mono text-fg-primary break-all">
                 {formatMoney(sale.amount)}
               </span>
-              <span className="text-neutral-400 text-base font-semibold shrink-0">{symbol}</span>
+              <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
             </div>
-            <p className="text-neutral-400 text-sm mb-6">
+            <p className="text-body-m text-fg-secondary mb-6">
               Order <span className="font-mono">#{sale.saleId.slice(-4).toUpperCase()}</span>
               {" · "}
               {when.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
@@ -257,80 +263,86 @@ export default function HistoryPage() {
               {when.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}
             </p>
 
-            {/* Itemized breakdown */}
+            {/* Itemized breakdown — rows of paired values: one style per row,
+                the figure ranked by its mono face, never by weight */}
             {(sale.items?.length ?? 0) > 0 && (
-              <div className="space-y-1.5 pb-4 border-b border-neutral-800 mb-4">
+              <div className="space-y-1.5 pb-4 border-b mb-4">
                 {sale.items!.map((item, i) => (
-                  <div key={`${item.name}-${i}`} className="flex justify-between text-sm">
-                    <span className="text-neutral-300">{item.quantity}x {item.name}</span>
-                    <span className="text-neutral-300">{lineTotal(item.unitPrice, item.quantity)} {symbol}</span>
+                  <div key={`${item.name}-${i}`} className="flex justify-between gap-4 text-body-m text-fg-secondary">
+                    <span>{item.quantity}x {item.name}</span>
+                    <span className="font-mono shrink-0">{lineTotal(item.unitPrice, item.quantity)} {symbol}</span>
                   </div>
                 ))}
               </div>
             )}
             {sale.tip && subtotalOf(sale) && (
-              <div className="space-y-1.5 pb-4 border-b border-neutral-800 mb-4 text-sm">
-                <div className="flex justify-between text-neutral-400">
+              <div className="space-y-1.5 pb-4 border-b mb-4 text-body-m text-fg-secondary">
+                <div className="flex justify-between gap-4">
                   <span>Subtotal</span>
-                  <span>{formatMoney(subtotalOf(sale)!)} {symbol}</span>
+                  <span className="font-mono">{formatMoney(subtotalOf(sale)!)} {symbol}</span>
                 </div>
-                <div className="flex justify-between text-neutral-400">
+                <div className="flex justify-between gap-4">
                   <span>Tip</span>
-                  <span>{formatMoney(sale.tip)} {symbol}</span>
+                  <span className="font-mono">{formatMoney(sale.tip)} {symbol}</span>
                 </div>
               </div>
             )}
-            <div className="flex justify-between mb-8">
-              <span className="text-white font-semibold">Total</span>
-              <span className="text-white font-bold">{formatMoney(sale.amount)} {symbol}</span>
+            <div className="flex justify-between gap-4 mb-8 text-body-l text-fg-primary">
+              <span>Total</span>
+              <span className="font-mono">{formatMoney(sale.amount)} {symbol}</span>
             </div>
 
-            {/* Actions */}
-            <div className="mb-2">
+            {/* Actions — rows on the page surface, so they hover to the
+                container step; the destructive one stays quiet at rest */}
+            <div className="mb-2 -mx-2">
               <button
                 onClick={() => handleViewReceipt(sale)}
-                className="w-full flex items-center gap-3 py-3 text-white hover:text-neutral-300 transition"
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
               >
-                <ReceiptText className="w-5 h-5" />
-                <span className="font-medium">Review Receipt</span>
+                <ReceiptText className="size-5" aria-hidden />
+                <span>Review Receipt</span>
               </button>
               <button
                 onClick={() => setShowShareQr(true)}
-                className="w-full flex items-center gap-3 py-3 text-white hover:text-neutral-300 transition"
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
               >
-                <QrCode className="w-5 h-5" />
-                <span className="font-medium">Share Receipt via QR</span>
+                <QrCode className="size-5" aria-hidden />
+                <span>Share Receipt via QR</span>
               </button>
               <button
                 onClick={() => setActionNote("Refunds aren't available yet.")}
-                className="w-full flex items-center gap-3 py-3 text-red-500 hover:text-red-400 transition"
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-error hover:bg-action-error transition-colors"
               >
-                <Undo2 className="w-5 h-5" />
-                <span className="font-medium">Refund</span>
+                <Undo2 className="size-5" aria-hidden />
+                <span>Refund</span>
               </button>
             </div>
             {actionNote && (
-              <p className="text-red-400 text-xs">{actionNote}</p>
+              <p className="text-body-s text-fg-error">{actionNote}</p>
             )}
           </main>
         </div>
 
-        {/* Share-receipt QR overlay */}
+        {/* Share-receipt QR overlay — a container card over the scrim; the QR
+            paints its own white quiet zone so it scans on every theme */}
         {showShareQr && (
-          <div className="fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-center px-6">
-            <p className="text-white text-xl font-semibold mb-1">Scan QR to Receive Receipt</p>
-            <p className="text-neutral-400 text-sm mb-6">
-              Payment Receipt: Order #{sale.saleId.slice(-4).toUpperCase()}
-            </p>
-            <div className="bg-white rounded-3xl p-6 mb-8">
-              <QRCodeSVG value={buildReceiptQrValue(receiptDataOf(sale))} size={240} level="L" />
+          <div className="fixed inset-0 z-50 bg-surface-overlay flex flex-col items-center justify-center px-6">
+            <div className="w-full max-w-sm bg-surface-container rounded-container shadow-3 p-6 flex flex-col items-center text-center">
+              <p className="text-heading-l text-fg-primary mb-1">Scan QR to Receive Receipt</p>
+              <p className="text-body-m text-fg-secondary mb-6">
+                Payment Receipt: Order #{sale.saleId.slice(-4).toUpperCase()}
+              </p>
+              <div className="rounded-container overflow-hidden mb-8">
+                <QRCodeSVG value={buildReceiptQrValue(receiptDataOf(sale))} size={272} level="L" marginSize={2} />
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() => setShowShareQr(false)}
+                className="w-full h-auto py-3.5 text-label-m"
+              >
+                Back
+              </Button>
             </div>
-            <button
-              onClick={() => setShowShareQr(false)}
-              className="w-full max-w-xs bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-3.5 rounded-xl transition"
-            >
-              Back
-            </button>
           </div>
         )}
       </div>
@@ -346,60 +358,68 @@ export default function HistoryPage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
         {/* Header */}
-        <header className="px-6 py-5 shrink-0">
-          <h1 data-testid="history-header" className="text-white text-3xl font-bold">History</h1>
-        </header>
+        <ScreenHeader title="History" testId="history-header" />
 
-        {/* Search */}
-        <div className="px-6 pb-3 shrink-0 flex items-center gap-3">
-          <div className="flex-1 flex items-center gap-2 bg-neutral-900 rounded-full px-4 py-2.5">
-            <Search className="w-4 h-4 text-neutral-500 shrink-0" />
-            <input
+        {/* Search — shadcn Input with the icon and clear control floating in
+            its padding; "Cancel" is the quiet escape (ghost, body style) */}
+        <div className="px-6 pb-3 shrink-0 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search
+              className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-fg-tertiary"
+              aria-hidden
+            />
+            <Input
               data-testid="history-search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Type Transaction ID"
-              className="w-full bg-transparent text-white text-sm outline-none placeholder:text-neutral-500"
+              aria-label="Search transactions"
+              className="h-11 rounded-full pl-10 pr-10"
             />
             {searching && (
-              <button onClick={() => setSearchTerm("")} aria-label="Clear search" className="shrink-0">
-                <X className="w-4 h-4 text-neutral-400" />
+              <button
+                onClick={() => setSearchTerm("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-fg-tertiary hover:bg-action-tertiary-hover hover:text-fg-primary transition-colors"
+              >
+                <X className="size-4" />
               </button>
             )}
           </div>
           {searching && (
-            <button
+            <Button
+              variant="ghost"
               onClick={() => setSearchTerm("")}
-              className="text-white text-sm font-medium shrink-0"
+              className="shrink-0 text-body-m font-normal"
             >
               Cancel
-            </button>
+            </Button>
           )}
         </div>
 
         <main className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
           {isLoading ? (
             <div className="flex justify-center py-16">
-              <Loader2 className="w-8 h-8 animate-spin text-neutral-600" />
+              <Loader2 className="size-6 animate-spin text-fg-tertiary" aria-hidden />
             </div>
           ) : searching && groups.length === 0 ? (
-            <p className="text-neutral-400 text-xs font-semibold tracking-widest pt-2">
-              WE HAVEN&apos;T FOUND ANY MATCHES
+            <p className="text-overline uppercase text-fg-secondary pt-2">
+              We haven&apos;t found any matches
             </p>
           ) : isEmpty ? (
             <div className="text-center py-16">
-              <h2 data-testid="history-empty" className="text-xl font-semibold text-white mb-2">
+              <h2 data-testid="history-empty" className="text-heading-l text-fg-primary mb-2">
                 No Transactions Yet
               </h2>
-              <p className="text-neutral-500 text-sm">
+              <p className="text-body-m text-fg-tertiary">
                 Completed sales will show up here.
               </p>
             </div>
           ) : (
             <>
               {searching && (
-                <p className="text-neutral-400 text-xs font-semibold tracking-widest mb-2">
-                  SEARCH RESULT
+                <p className="text-overline uppercase text-fg-secondary mb-2">
+                  Search result
                 </p>
               )}
               {groups.map(([groupLabel, sales]) => {
@@ -409,45 +429,50 @@ export default function HistoryPage() {
                 }, 0);
                 return (
                   <section key={groupLabel} className="mb-5">
+                    {/* Group eyebrow + total: one style, the figure in mono */}
                     {!searching && (
-                      <div className="flex justify-between items-baseline mb-1">
-                        <h3 className="text-neutral-400 text-xs font-semibold tracking-widest">
+                      <div className="flex justify-between items-baseline mb-1 px-2">
+                        <h3 className="text-overline uppercase text-fg-secondary">
                           {groupLabel}
                         </h3>
-                        <span className="text-neutral-400 text-xs font-semibold">
+                        <span className="text-overline font-mono text-fg-secondary">
                           {groupTotal.toFixed(2)} {symbol}
                         </span>
                       </div>
                     )}
-                    {sales.map((sale) => {
-                      const time = new Date(sale.timestamp).toLocaleTimeString("en-US", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        hour12: false,
-                      });
-                      return (
-                        <button
-                          key={sale.saleId}
-                          onClick={() => setSelectedSale(sale)}
-                          className="w-full flex items-center gap-3 py-2.5 text-left"
-                        >
-                          <span className="w-11 h-11 rounded-full bg-green-950 flex items-center justify-center shrink-0">
-                            <ArrowDown className="w-5 h-5 text-green-500" />
-                          </span>
-                          <span className="flex-1 min-w-0">
-                            <span className="block text-white font-semibold">
-                              Order #{sale.saleId.slice(-4).toUpperCase()}
+                    {/* Rows on the page surface hover to the container step
+                        (a list this long has to track under the cursor) */}
+                    <div className="-mx-2">
+                      {sales.map((sale) => {
+                        const time = new Date(sale.timestamp).toLocaleTimeString("en-US", {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          hour12: false,
+                        });
+                        return (
+                          <button
+                            key={sale.saleId}
+                            onClick={() => setSelectedSale(sale)}
+                            className="w-full flex items-center gap-3 px-2 py-2.5 rounded-medium text-left hover:bg-surface-container transition-colors"
+                          >
+                            <span className="size-11 flex items-center justify-center shrink-0">
+                              <ArrowDown className="size-5 text-fg-success" aria-hidden />
                             </span>
-                            <span className="block text-neutral-500 text-sm">
-                              Received · {time}
+                            <span className="flex-1 min-w-0">
+                              <span className="block text-label-l text-fg-primary">
+                                Order #{sale.saleId.slice(-4).toUpperCase()}
+                              </span>
+                              <span className="block text-body-m text-fg-tertiary">
+                                Received · {time}
+                              </span>
                             </span>
-                          </span>
-                          <span className="text-white font-semibold shrink-0">
-                            {formatMoney(sale.amount)} {symbol}
-                          </span>
-                        </button>
-                      );
-                    })}
+                            <span className="text-label-l font-mono text-fg-primary shrink-0">
+                              {formatMoney(sale.amount)} {symbol}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </section>
                 );
               })}

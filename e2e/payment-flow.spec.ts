@@ -8,9 +8,8 @@ test.describe('Payment flow — merchant to customer', () => {
     await navigateToTerminal(testHost);
     await enterAmount(frame, '1');
 
-    // Keypad → review step → arm the QR
+    // Keypad → Charge arms the QR directly (no review step)
     await frame.locator('[data-testid="btn-charge"]').click();
-    await frame.locator('[data-testid="btn-generate-qr"]').click();
 
     await expect(
       frame.locator('[data-testid="waiting-text"]'),
