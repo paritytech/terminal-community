@@ -15,6 +15,7 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 import { ScreenHeader } from "@/components/screen-header";
 import { SubpageHeader, iconButtonClass } from "@/components/subpage-header";
+import { FEATURES } from "@/lib/config/features";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAccount } from "@/lib/web3";
@@ -293,30 +294,40 @@ export default function HistoryPage() {
             </div>
 
             {/* Actions — rows on the page surface, so they hover to the
-                container step; the destructive one stays quiet at rest */}
-            <div className="mb-2 -mx-2">
-              <button
-                onClick={() => handleViewReceipt(sale)}
-                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
-              >
-                <ReceiptText className="size-5" aria-hidden />
-                <span>Review Receipt</span>
-              </button>
-              <button
-                onClick={() => setShowShareQr(true)}
-                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
-              >
-                <QrCode className="size-5" aria-hidden />
-                <span>Share Receipt via QR</span>
-              </button>
-              <button
-                onClick={() => setActionNote("Refunds aren't available yet.")}
-                className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-error hover:bg-action-error transition-colors"
-              >
-                <Undo2 className="size-5" aria-hidden />
-                <span>Refund</span>
-              </button>
-            </div>
+                container step; the destructive one stays quiet at rest.
+                Receipt tooling and refunds are parked behind
+                FEATURES.receipts / FEATURES.refunds for R1. */}
+            {(FEATURES.receipts || FEATURES.refunds) && (
+              <div className="mb-2 -mx-2">
+                {FEATURES.receipts && (
+                  <>
+                    <button
+                      onClick={() => handleViewReceipt(sale)}
+                      className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
+                    >
+                      <ReceiptText className="size-5" aria-hidden />
+                      <span>Review Receipt</span>
+                    </button>
+                    <button
+                      onClick={() => setShowShareQr(true)}
+                      className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-surface-container transition-colors"
+                    >
+                      <QrCode className="size-5" aria-hidden />
+                      <span>Share Receipt via QR</span>
+                    </button>
+                  </>
+                )}
+                {FEATURES.refunds && (
+                  <button
+                    onClick={() => setActionNote("Refunds aren't available yet.")}
+                    className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-error hover:bg-action-error transition-colors"
+                  >
+                    <Undo2 className="size-5" aria-hidden />
+                    <span>Refund</span>
+                  </button>
+                )}
+              </div>
+            )}
             {actionNote && (
               <p className="text-body-s text-fg-error">{actionNote}</p>
             )}

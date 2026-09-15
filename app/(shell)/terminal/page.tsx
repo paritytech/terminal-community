@@ -1488,8 +1488,11 @@ function TerminalPageInner() {
 
             {/* Secondary actions — a list of rows on the container surface, so
                 the row owns the hover (selection token) and the destructive
-                one stays quiet at rest. */}
+                one stays quiet at rest. Receipt tooling and refunds are parked
+                behind FEATURES.receipts / FEATURES.refunds for R1. */}
+            {(FEATURES.receipts || FEATURES.refunds) && (
             <div className="mb-4 -mx-2">
+              {FEATURES.receipts && (
               <button
                 onClick={() => setTerminalState("receipt")}
                 className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-selection-container-hover transition-colors"
@@ -1497,7 +1500,8 @@ function TerminalPageInner() {
                 <ReceiptText className="size-5" aria-hidden />
                 <span>Review Receipt</span>
               </button>
-              {printerAvailable && (
+              )}
+              {FEATURES.receipts && printerAvailable && (
                 <button
                   onClick={handlePrintReceipt}
                   disabled={isPrintingReceipt}
@@ -1511,6 +1515,7 @@ function TerminalPageInner() {
                   <span>Print Receipt</span>
                 </button>
               )}
+              {FEATURES.refunds && (
               <button
                 onClick={() =>
                   setPrintMessage({ tone: "error", text: "Refunds aren't available yet." })
@@ -1520,7 +1525,9 @@ function TerminalPageInner() {
                 <Undo2 className="size-5" aria-hidden />
                 <span>Refund</span>
               </button>
+              )}
             </div>
+            )}
 
             {/* Feedback line. Success has no tint token — the nested surface
                 carries success-coloured text; error takes the error tint. */}
@@ -1535,7 +1542,7 @@ function TerminalPageInner() {
             )}
 
             {/* Done (the view's main action, pill) + share-QR (a circular icon
-                button, exempt from the pill count) */}
+                button, exempt from the pill count; receipts flag) */}
             <div className="flex gap-3">
               <Button
                 data-testid="btn-done"
@@ -1544,14 +1551,16 @@ function TerminalPageInner() {
               >
                 Done
               </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setTerminalState("share")}
-                aria-label="Share receipt QR"
-                className="size-14 rounded-full p-0"
-              >
-                <QrCode className="size-6" />
-              </Button>
+              {FEATURES.receipts && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setTerminalState("share")}
+                  aria-label="Share receipt QR"
+                  className="size-14 rounded-full p-0"
+                >
+                  <QrCode className="size-6" />
+                </Button>
+              )}
             </div>
           </main>
         </div>

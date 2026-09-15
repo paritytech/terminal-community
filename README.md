@@ -68,6 +68,8 @@ NEXT_PUBLIC_FEATURE_BECOME_MERCHANT=1 npm run build
 | --- | --- | --- | --- |
 | `becomeMerchant` | `NEXT_PUBLIC_FEATURE_BECOME_MERCHANT` | off | "Become a Merchant" entry points (Home tile, Settings card) |
 | `nfcTapToPay` | `NEXT_PUBLIC_FEATURE_NFC_TAP_TO_PAY` | off | NFC tap-to-pay on the payment QR screen (HCE emit + banner text) |
+| `receipts` | `NEXT_PUBLIC_FEATURE_RECEIPTS` | off | Review / Print / Share-via-QR receipt actions after a sale and in History |
+| `refunds` | `NEXT_PUBLIC_FEATURE_REFUNDS` | off | Refund entry points after a sale and in History |
 
 The values are inlined by the static export, so a flag can't change at
 runtime — rebuild to toggle.
