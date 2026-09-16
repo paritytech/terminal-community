@@ -38,6 +38,20 @@ export const FEATURES = {
    * R1 — the screen says "Scan QR to pay" and nothing is emitted.
    */
   nfcTapToPay: flag(process.env.NEXT_PUBLIC_FEATURE_NFC_TAP_TO_PAY, false),
+
+  /**
+   * Receipt tooling after a sale — Review Receipt, Print Receipt and Share
+   * Receipt via QR, on the payment-received screen and in History. Off for
+   * R1 alongside the merchant flow: the sale is still recorded and the
+   * receipt data kept, only the entry points are hidden.
+   */
+  receipts: flag(process.env.NEXT_PUBLIC_FEATURE_RECEIPTS, false),
+
+  /**
+   * Refund entry points (payment-received screen, History). Off for R1 —
+   * refunds aren't implemented yet, so the button only said so.
+   */
+  refunds: flag(process.env.NEXT_PUBLIC_FEATURE_REFUNDS, false),
 } as const;
 
 export type FeatureName = keyof typeof FEATURES;

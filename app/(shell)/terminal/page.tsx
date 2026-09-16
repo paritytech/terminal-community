@@ -20,6 +20,7 @@ import {
   Search,
   ShoppingCart,
   StickyNote,
+  TriangleAlert,
   Undo2,
   QrCode,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { useNavLock, useNavHidden } from "@/components/nav-lock";
 import { AmountHero } from "@/components/amount-hero";
 import { ScreenHeader } from "@/components/screen-header";
 import { Button } from "@/components/ui/button";
+import { HostConnectionHint } from "@/components/host-connection-status";
 import { Input } from "@/components/ui/input";
 import { FEATURES } from "@/lib/config/features";
 import { useAccount } from "@/lib/web3";
@@ -56,6 +58,7 @@ import {
 } from "@/lib/payments/coinage";
 import { isHostPrinterAvailable, printHostDocument } from "@/lib/host/printing";
 import { publishNfcPaymentDeeplink, stopNfcEmitting } from "@/lib/host/nfc";
+import { watchTopUpFinality } from "@/lib/payments/coinage/topup-watcher";
 import { buildCustomerReceiptPrintDocument } from "@/lib/receipts/thermal-print";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
@@ -155,6 +158,9 @@ function TerminalPageInner() {
   // Partial credit progress for multi-group offboards: set while the running
   // total is below the requested amount, cleared once the sale completes.
   const [partial, setPartial] = useState<PartialPayment | null>(null);
+  // Coins claim that credited less than the cheque asked for (the host will
+  // claim no more) — shown on the completed screen next to the recorded amount.
+  const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string } | null>(null);
   const [svgReceipt, setSvgReceipt] = useState<string | null>(null);
   const [finalAmount, setFinalAmount] = useState<string>("");
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -393,12 +399,13 @@ function TerminalPageInner() {
 
   usePaymentListener(listenerOptions);
 
-  // W3S Coinage completion: the host has already moved the bearer coins into
-  // the merchant coin set (paymentTopUp Coins) — the claim only resolves once
-  // its extrinsics are in-block, and the host owns the submission. There's no
-  // public sender and no inclusion block hash to track, so we record the sale
-  // against the merchant identity with an "anonymous" customer and stamp it
-  // finalized immediately (green check in History) rather than spinning.
+  // W3S Coinage completion: the host has moved the bearer coins into the
+  // merchant coin set (paymentTopUp Coins) and the claim is in a best-chain
+  // block. There's no public sender and no inclusion block hash to track, so
+  // the sale is recorded against the merchant identity with an "anonymous"
+  // customer — and, unless the host already reported it final, WITHOUT
+  // `finalizedAt`: a reorg can still shrink or undo the claim, so the
+  // background watcher follows the host's top-up id to its last word.
   const handleCoinsPaid = async (result: CoinagePaymentResult) => {
     journeyTracker.milestone("terminal-payment", "payment-detected");
     journeyTracker.addAttributes("terminal-payment", {
@@ -422,6 +429,9 @@ function TerminalPageInner() {
     };
     setPaymentReceived(payment);
     setSaleId(result.paymentId);
+    setCoinsShortfall(
+      result.partial ? { requested: result.requestedAmount, credited: result.amount } : null,
+    );
 
     const receiptItems: ReceiptItem[] = pendingItems.map((line) => ({
       name: line.name,
@@ -444,16 +454,25 @@ function TerminalPageInner() {
         blockNumber: 0,
         blockHash: result.paymentId,
         timestamp: new Date(),
-        // Coin claims confirm on the spot — the host already moved the coins
-        // in-block. Stamp finalized now so History shows the green check
-        // immediately (no finality spinner, unlike the standard pUSD flow).
-        finalizedAt: new Date(),
+        // Final only when the host said so (or the claim settled partially,
+        // which is final). Otherwise the watcher stamps it later.
+        finalizedAt: result.finalized ? new Date() : undefined,
+        topUpId: result.topUpId,
+        requestedAmount: result.partial ? result.requestedAmount : undefined,
+        requestedAmountPlanck: result.partial
+          ? amountToPlanck(result.requestedAmount, PUSD_DECIMALS).toString()
+          : undefined,
         type: "incoming",
         items: receiptItems.length > 0 ? receiptItems : undefined,
         tip: tipDecimal,
         note: note.trim() || undefined,
       });
       journeyTracker.milestone("terminal-payment", "sale-saved");
+      if (!result.finalized) {
+        // Fire-and-forget: survives this page unmounting, and is re-armed on
+        // the next launch for anything still confirming.
+        watchTopUpFinality({ saleId: result.paymentId, topUpIdHex: result.topUpId });
+      }
     } catch (err) {
       console.error("[Terminal] Failed to save coins sale:", err);
       captureError(err, { component: "terminal", phase: "save-sale-coins" }, {
@@ -691,6 +710,7 @@ function TerminalPageInner() {
     setFinalAmount("");
     setPaymentReceived(null);
     setPartial(null);
+    setCoinsShortfall(null);
     setSaleId(null);
     setSvgReceipt(null);
     setShowCancelModal(false);
@@ -797,7 +817,7 @@ function TerminalPageInner() {
           <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
             <div className="text-center space-y-3 w-full">
               <h1 className="text-heading-l text-fg-primary">Welcome</h1>
-              <p className="text-body-m text-fg-tertiary">Connecting to host…</p>
+              <HostConnectionHint size="body" />
             </div>
           </main>
         </div>
@@ -1202,6 +1222,10 @@ function TerminalPageInner() {
     const paymentIncoming =
       useCoins &&
       (coinage.status === "claiming" || coinage.status === "paid");
+    // The host could not finish claiming the cheque's coins (see
+    // lib/payments/coinage/claim.ts). The customer has already paid, so the
+    // QR must not come back; the merchant retries the claim or cancels.
+    const claimFailed = useCoins && coinage.status === "error";
     const canCancelTransaction = !paymentIncoming && !partial && !paymentReceived;
     // Warning fill while the QR is being armed (connectivity pre-flight or
     // deeplink still computing); the inverted container surface once it's
@@ -1219,20 +1243,24 @@ function TerminalPageInner() {
               inverted fg. */}
           <div
             className={`basis-[30%] grow-0 shrink-0 px-6 pb-8 flex flex-col items-center justify-center gap-3 transition-colors ${
-              generating
+              generating || claimFailed
                 ? "bg-status-warning text-fg-static-white"
                 : "bg-surface-container-inverted text-fg-primary-inverted"
             }`}
           >
             {generating ? (
               <Hourglass className="size-6" aria-hidden />
+            ) : claimFailed ? (
+              <TriangleAlert className="size-6" aria-hidden />
             ) : (
               <Radio className="size-6" aria-hidden />
             )}
             <h2 data-testid="waiting-text" className="text-display-l text-center">
               {generating
                 ? "Generating Payment"
-                : paymentIncoming
+                : claimFailed
+                  ? "Claim didn't finish"
+                  : paymentIncoming
                   ? "Payment incoming…"
                   : partial
                     ? "Receiving payment…"
@@ -1290,6 +1318,10 @@ function TerminalPageInner() {
                   <div className="size-68 flex items-center justify-center">
                     <Loader2 className="size-6 animate-spin text-fg-secondary" />
                   </div>
+                ) : claimFailed ? (
+                  <div className="size-68 flex items-center justify-center">
+                    <TriangleAlert className="size-6 text-fg-warning" aria-hidden />
+                  </div>
                 ) : displayQrValue ? (
                   <QRCodeSVG value={displayQrValue} size={272} level="H" marginSize={2} />
                 ) : (
@@ -1299,8 +1331,21 @@ function TerminalPageInner() {
                 )}
               </div>
 
-              {useCoins && coinage.status === "error" && coinage.error && (
-                <p className="text-body-s text-fg-error mt-4 text-center max-w-xs">
+              {/* Claim progress / failure — plain words; the raw host reason is
+                  in the console and telemetry */}
+              {useCoins && coinage.status === "claiming" && (
+                <p data-testid="coins-claiming" className="text-body-m text-fg-secondary mt-4 text-center max-w-xs">
+                  {coinage.claimStage === "detecting"
+                    ? "Waiting for the coins to reach the chain"
+                    : coinage.claimStage === "claiming"
+                      ? "Moving the coins into your balance"
+                      : "Handing the payment to the Polkadot app"}
+                  {coinage.claimAttempt > 1 ? ` · retry ${coinage.claimAttempt - 1}` : ""}
+                  . This can take a minute.
+                </p>
+              )}
+              {claimFailed && coinage.error && (
+                <p data-testid="coins-claim-error" className="text-body-m text-fg-error mt-4 text-center max-w-xs">
                   {coinage.error}
                 </p>
               )}
@@ -1309,15 +1354,28 @@ function TerminalPageInner() {
             {/* Cancel pinned to the bottom; error-coloured label while still
                 generating. A secondary button — the screen's main action is
                 the customer's scan, not this. */}
-            {canCancelTransaction && (
-              <div className="shrink-0 pb-5">
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowCancelModal(true)}
-                  className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
-                >
-                  Cancel Transaction
-                </Button>
+            {(claimFailed || canCancelTransaction) && (
+              <div className="shrink-0 pb-5 flex flex-col gap-2">
+                {/* After a failed claim the retry is the screen's main action;
+                    Cancel stays beneath it as the quieter alternative. */}
+                {claimFailed && (
+                  <Button
+                    data-testid="btn-retry-claim"
+                    onClick={coinage.retryClaim}
+                    className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold"
+                  >
+                    Retry claim
+                  </Button>
+                )}
+                {canCancelTransaction && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowCancelModal(true)}
+                    className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
+                  >
+                    Cancel Transaction
+                  </Button>
+                )}
               </div>
             )}
           </main>
@@ -1422,6 +1480,11 @@ function TerminalPageInner() {
               {" · "}
               {now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
             </p>
+            {coinsShortfall && (
+              <p data-testid="coins-shortfall" className="text-body-m text-fg-warning -mt-4 mb-6">
+                Received {coinsShortfall.credited} of {coinsShortfall.requested} {symbol}. The rest didn&apos;t arrive.
+              </p>
+            )}
 
             {/* Receipt note typed on the amount screen */}
             {note.trim() && (
@@ -1435,8 +1498,11 @@ function TerminalPageInner() {
 
             {/* Secondary actions — a list of rows on the container surface, so
                 the row owns the hover (selection token) and the destructive
-                one stays quiet at rest. */}
+                one stays quiet at rest. Receipt tooling and refunds are parked
+                behind FEATURES.receipts / FEATURES.refunds for R1. */}
+            {(FEATURES.receipts || FEATURES.refunds) && (
             <div className="mb-4 -mx-2">
+              {FEATURES.receipts && (
               <button
                 onClick={() => setTerminalState("receipt")}
                 className="w-full flex items-center gap-3 px-2 py-3 rounded-medium text-label-l text-fg-primary hover:bg-selection-container-hover transition-colors"
@@ -1444,7 +1510,8 @@ function TerminalPageInner() {
                 <ReceiptText className="size-5" aria-hidden />
                 <span>Review Receipt</span>
               </button>
-              {printerAvailable && (
+              )}
+              {FEATURES.receipts && printerAvailable && (
                 <button
                   onClick={handlePrintReceipt}
                   disabled={isPrintingReceipt}
@@ -1458,6 +1525,7 @@ function TerminalPageInner() {
                   <span>Print Receipt</span>
                 </button>
               )}
+              {FEATURES.refunds && (
               <button
                 onClick={() =>
                   setPrintMessage({ tone: "error", text: "Refunds aren't available yet." })
@@ -1467,7 +1535,9 @@ function TerminalPageInner() {
                 <Undo2 className="size-5" aria-hidden />
                 <span>Refund</span>
               </button>
+              )}
             </div>
+            )}
 
             {/* Feedback line. Success has no tint token — the nested surface
                 carries success-coloured text; error takes the error tint. */}
@@ -1482,7 +1552,7 @@ function TerminalPageInner() {
             )}
 
             {/* Done (the view's main action, pill) + share-QR (a circular icon
-                button, exempt from the pill count) */}
+                button, exempt from the pill count; receipts flag) */}
             <div className="flex gap-3">
               <Button
                 data-testid="btn-done"
@@ -1491,14 +1561,16 @@ function TerminalPageInner() {
               >
                 Done
               </Button>
-              <Button
-                variant="secondary"
-                onClick={() => setTerminalState("share")}
-                aria-label="Share receipt QR"
-                className="size-14 rounded-full p-0"
-              >
-                <QrCode className="size-6" />
-              </Button>
+              {FEATURES.receipts && (
+                <Button
+                  variant="secondary"
+                  onClick={() => setTerminalState("share")}
+                  aria-label="Share receipt QR"
+                  className="size-14 rounded-full p-0"
+                >
+                  <QrCode className="size-6" />
+                </Button>
+              )}
             </div>
           </main>
         </div>

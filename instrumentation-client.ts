@@ -99,17 +99,36 @@ if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
   setTimeout(install, 500);
 }
 
-Sentry.init({
-  ...commonInitOptions(),
-  // Keep error-only session replay (no session recording, 100% on error).
-  integrations: [Sentry.replayIntegration()],
-  replaysSessionSampleRate: 0.0,
-  replaysOnErrorSampleRate: 1.0,
-});
+// ── Sentry ──────────────────────────────────────────────────────────
+//
+// Telemetry must never take the terminal down. Product sandboxes rewrite
+// browser globals: the Polkadot app's TrUAPI runtime "deletes" XMLHttpRequest
+// by redefining it as a getter that returns `undefined`, so
+// `"XMLHttpRequest" in window` stays true while `XMLHttpRequest.prototype`
+// throws — which is exactly what Sentry's default `BrowserApiErrors`
+// integration does in `setupOnce`. Left alone, `Sentry.init()` throws before
+// React hydrates and the merchant is stuck on a static "Connecting to host…"
+// (iOS nightly, 2026-09-15). So: only patch XHR when it really is a
+// constructor, and treat any init failure as "no telemetry", never "no app".
+const xhrAvailable = typeof XMLHttpRequest === "function";
+try {
+  Sentry.init({
+    ...commonInitOptions(),
+    integrations: [
+      Sentry.browserApiErrorsIntegration({ XMLHttpRequest: xhrAvailable }),
+      // Keep error-only session replay (no session recording, 100% on error).
+      Sentry.replayIntegration(),
+    ],
+    replaysSessionSampleRate: 0.0,
+    replaysOnErrorSampleRate: 1.0,
+  });
 
-// Tag synthetic E2E traffic so production error alerts can exclude it.
-const e2eTag = getE2eTag();
-if (e2eTag) Sentry.setTag("tag", e2eTag);
+  // Tag synthetic E2E traffic so production error alerts can exclude it.
+  const e2eTag = getE2eTag();
+  if (e2eTag) Sentry.setTag("tag", e2eTag);
+} catch (error) {
+  console.warn("[telemetry] Sentry init failed; continuing without error reporting:", error);
+}
 
 // Required for Next.js App Router navigation instrumentation
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

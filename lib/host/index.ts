@@ -1,4 +1,9 @@
-export { detectHostEnvironment, isInHost, type HostEnvironment } from "./detect"
+export { detectHostEnvironment, isInHost, isTruApiRuntime, type HostEnvironment } from "./detect"
+export {
+  describeHostConnectionFailure,
+  type HostConnectionFailure,
+  type HostConnectionState,
+} from "./connection-status"
 export { connectToHost, isHostConnected } from "./connection"
 export {
   getPaseoIndividualityClient,

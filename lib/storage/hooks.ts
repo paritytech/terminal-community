@@ -166,6 +166,8 @@ export function useTodaysIncome() {
         if (!isMerchant) continue;
         if (seen.has(sale.saleId)) continue;
         if (!isSameDay(new Date(sale.timestamp), today)) continue;
+        // A coins claim the host later reverted is not income.
+        if (sale.revertedAt) continue;
         seen.add(sale.saleId);
         try {
           total += BigInt(sale.amountPlanck);

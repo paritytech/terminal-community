@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAccount } from "@/lib/web3";
 import { journeyTracker } from "@/lib/telemetry";
+import { HostConnectionHint } from "@/components/host-connection-status";
 
 export default function Home() {
   const router = useRouter();
@@ -33,9 +34,10 @@ export default function Home() {
   }, [account, router]);
 
   // Until the host connection resolves we can't route anywhere useful, so we
-  // show a minimal connecting state rather than the old "Select Items" splash.
-  // Page surface comes from the theme (body is bg-surface-main). The wordmark
-  // is set in the display style — Manrope, the system's display face.
+  // show a minimal connecting state — and, if the auto-connect gives up, the
+  // reason plus a Retry (components/host-connection-status.tsx). Page surface
+  // comes from the theme (body is bg-surface-main). The wordmark is set in the
+  // display style — Manrope, the system's display face.
   return (
     <div className="min-h-dvh flex flex-col">
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-12">
@@ -59,7 +61,7 @@ export default function Home() {
           <p className="text-body-l text-fg-secondary">Payment Terminal</p>
         </div>
 
-        <p className="text-caption text-fg-tertiary">Connecting to host…</p>
+        <HostConnectionHint size="caption" />
       </main>
     </div>
   );

@@ -15,6 +15,8 @@ import {
   findFirstByField,
   clearTable,
 } from './host-storage';
+import { formatAmountFromPlanck } from '@/lib/utils/format';
+import { PUSD_DECIMALS } from '@/lib/utils/asset-ids';
 import type {
   SaleRecord,
   PendingPayment,
@@ -130,6 +132,50 @@ export async function markSaleFinalized(saleId: string, at: Date = new Date()): 
   await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
     finalizedAt: at,
   } as Partial<SaleRecord>);
+}
+
+/**
+ * Coins claim settled partially after the sale was recorded: keep what the
+ * cheque asked for on `requestedAmount*`, make `amount*` the credited total,
+ * and mark the sale final (a partial claim is the host's last word).
+ * Idempotent for an already-final sale.
+ */
+export async function recordSaleClaimShortfall(saleId: string, creditedPlanck: bigint): Promise<void> {
+  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
+  if (!sale?.id || sale.finalizedAt || sale.revertedAt) return;
+  await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
+    requestedAmount: sale.requestedAmount ?? sale.amount,
+    requestedAmountPlanck: sale.requestedAmountPlanck ?? sale.amountPlanck,
+    amount: formatAmountFromPlanck(creditedPlanck.toString(), PUSD_DECIMALS),
+    amountPlanck: creditedPlanck.toString(),
+    finalizedAt: new Date(),
+  } as Partial<SaleRecord>);
+}
+
+/**
+ * Coins claim reverted after the sale was recorded (the host's last word was
+ * `notClaimed`). The row stays, flagged, so History can say what happened;
+ * totals skip it. Idempotent for an already-final sale.
+ */
+export async function markSaleReverted(saleId: string, at: Date = new Date()): Promise<void> {
+  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
+  if (!sale?.id || sale.finalizedAt || sale.revertedAt) return;
+  await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
+    revertedAt: at,
+  } as Partial<SaleRecord>);
+}
+
+/** Coins sales recorded on best-block whose claim has no last word yet. */
+export async function getSalesAwaitingClaimFinality(): Promise<Array<{ saleId: string; topUpIdHex: string }>> {
+  const all = await readTable<SaleRecord>(TABLES.sales);
+  const seen = new Set<string>();
+  const pending: Array<{ saleId: string; topUpIdHex: string }> = [];
+  for (const sale of all) {
+    if (!sale.topUpId || sale.finalizedAt || sale.revertedAt || seen.has(sale.saleId)) continue;
+    seen.add(sale.saleId);
+    pending.push({ saleId: sale.saleId, topUpIdHex: sale.topUpId });
+  }
+  return pending;
 }
 
 /**
