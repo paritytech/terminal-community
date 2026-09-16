@@ -12,6 +12,7 @@
 import { createPapiProvider } from "@novasamatech/host-api-wrapper"
 import { createClient, PolkadotClient } from "polkadot-api"
 import { getWsProvider } from "@polkadot-api/ws-provider"
+import { isProductWebSocketBlocked } from "./detect"
 
 // Paseo Individuality (Next v2) — people-system parachain hosting pallet-coinage
 // and the pUSD foreign asset. Paseo Next v2 is re-genesised periodically (last
@@ -48,6 +49,23 @@ export const PASEO_ASSET_HUB_WS =
 // client here. The merchant-signed alternative (signPayload via host)
 // fails on the phone wallet's 256-byte payload ceiling.
 
+/**
+ * Direct-WS fallback for chains the host doesn't expose. The Polkadot phone
+ * app answers `chainSupported` → false for both chains below, so on Android
+ * every chain read actually goes over this fallback. The iOS native container
+ * blocks product-side WebSockets outright (`new WebSocket` throws), so there
+ * the fallback can only throw — pass none and let the wrapper report the chain
+ * as unsupported instead. Coins settlement never needs these reads (see
+ * lib/payments/host-reachability.ts); the pUSD path does.
+ */
+function wsFallback(url: string) {
+  if (isProductWebSocketBlocked()) {
+    console.warn(`[Host Provider] product WebSockets are blocked by the host sandbox — no direct fallback for ${url}`)
+    return undefined
+  }
+  return getWsProvider(url)
+}
+
 let paseoIndividualityClient: PolkadotClient | null = null
 let paseoAssetHubClient: PolkadotClient | null = null
 
@@ -56,7 +74,7 @@ export function getPaseoIndividualityClient(): PolkadotClient {
   // Pass a WS fallback so we still connect on hosts that don't yet expose this
   // chain as a known target. createPapiProvider probes host support during
   // isReady() and falls through to WS when absent.
-  const provider = createPapiProvider(PASEO_INDIVIDUALITY_GENESIS, getWsProvider(PASEO_INDIVIDUALITY_WS))
+  const provider = createPapiProvider(PASEO_INDIVIDUALITY_GENESIS, wsFallback(PASEO_INDIVIDUALITY_WS))
   paseoIndividualityClient = createClient(provider)
   console.log("[Host Provider] Paseo Individuality client created (WS fallback)")
   return paseoIndividualityClient
@@ -74,7 +92,7 @@ export function getPaseoAssetHubClient(): PolkadotClient {
   // standalone (regular browser tab) still works without code change.
   // Signing also goes through the host product-account signer (see
   // lib/host/accounts.ts), so chain RPC + signing share the host transport.
-  const provider = createPapiProvider(PASEO_ASSET_HUB_GENESIS, getWsProvider(PASEO_ASSET_HUB_WS))
+  const provider = createPapiProvider(PASEO_ASSET_HUB_GENESIS, wsFallback(PASEO_ASSET_HUB_WS))
   paseoAssetHubClient = createClient(provider)
   console.log("[Host Provider] Paseo Asset Hub Next client created (host bridge + WS fallback)")
   return paseoAssetHubClient

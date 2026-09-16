@@ -46,6 +46,25 @@ export function isTruApiRuntime(): boolean {
 }
 
 /**
+ * True when the host sandbox refuses product-side WebSockets. The Polkadot
+ * iOS app's native container replaces `window.WebSocket` with a Proxy whose
+ * constructor throws `TypeError("Network access is not allowed")`; Android's
+ * container leaves it alone. Probed with an invalid URL so no connection is
+ * ever attempted: a real WebSocket rejects `ws://` with a SyntaxError before
+ * touching the network, the blocking proxy throws its TypeError first.
+ * Used to skip the direct-WS chain fallback where it can only fail.
+ */
+export function isProductWebSocketBlocked(): boolean {
+  if (typeof window === "undefined" || typeof WebSocket === "undefined") return false
+  try {
+    new WebSocket("ws://")
+    return false
+  } catch (error) {
+    return error instanceof TypeError && /not allowed/i.test((error as Error).message)
+  }
+}
+
+/**
  * Async variant — also performs the product-sdk sandbox handshake. Use this
  * when you can afford an await and need the strongest detection (e.g., during
  * app boot before triggering host-only flows).

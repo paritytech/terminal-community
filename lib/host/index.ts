@@ -1,4 +1,10 @@
-export { detectHostEnvironment, isInHost, isTruApiRuntime, type HostEnvironment } from "./detect"
+export {
+  detectHostEnvironment,
+  isInHost,
+  isTruApiRuntime,
+  isProductWebSocketBlocked,
+  type HostEnvironment,
+} from "./detect"
 export {
   describeHostConnectionFailure,
   type HostConnectionFailure,
