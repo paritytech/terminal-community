@@ -49,7 +49,7 @@
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
-    "@sentry/nextjs": "^10.54.0",
+    "@sentry/nextjs": "10.67.0",
     "@tailwindcss/postcss": "^4",
     "@tanstack/react-query": "^5.90.2",
     "@types/color": "^4.2.0",
@@ -94,5 +94,16 @@
     "tsx": "^4.19.2",
     "typescript": "^5",
     "vitest": "^4.1.8"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true,
+    "unrs-resolver": true,
+    "@sentry/cli@2.58.6": true,
+    "core-js": false,
+    "sharp": false
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }
