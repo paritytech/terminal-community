@@ -37,6 +37,8 @@ import { useQRGenerator } from "@/lib/hooks/use-qr-generator";
 import { usePaymentListener, type PaymentDetected, type PartialPayment } from "@/lib/hooks/use-payment-listener";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
 import { useChainConnectivity } from "@/lib/hooks/use-chain-connectivity";
+import { isChainReachable } from "@/lib/payments/chain-reachability";
+import { isHostPaymentsReachable } from "@/lib/payments/host-reachability";
 import { PUSD_ASSET_ID, PUSD_DECIMALS } from "@/lib/utils/asset-ids";
 import { useAssetSymbol, getAssetSymbol } from "@/lib/utils/asset-metadata";
 import { formatAmountFromPlanck, amountToPlanck } from "@/lib/utils/format";
@@ -170,7 +172,12 @@ function TerminalPageInner() {
   // Cart lines stashed by /items "Charge" — flow into the printed receipt.
   const [pendingItems, setPendingItems] = useState<StoredCartLine[]>([]);
   // Chain reachability: periodic indicator + a pre-flight gate before issuing a QR.
-  const connectivity = useChainConnectivity();
+  // Coins settle through the host's payments bridge (no direct chain read),
+  // pUSD through the chain itself — probe the path that will actually be
+  // used. Until the method setting loads nothing is probed.
+  const connectivity = useChainConnectivity({
+    probe: method === undefined ? null : useCoins ? isHostPaymentsReachable : isChainReachable,
+  });
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
   // Items checkout mode (Settings → Show Items in Checkout). When enabled the
   // entry screen swaps to the item grid with an in-memory basket; the keypad
