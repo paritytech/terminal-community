@@ -50,12 +50,16 @@ export default function HomePage() {
           />
         </section>
 
-        {/* Action tiles. Sales/Export work from day one; Reports (X/Z
-            tooling) unlocks with the merchant profile. The Become a Merchant
-            entry is parked behind FEATURES.becomeMerchant for R1. */}
+        {/* Action tiles. Sales works from day one; Reports (X/Z tooling)
+            unlocks with the merchant profile. Export CSV and the Become a
+            Merchant entry are parked behind FEATURES.becomeMerchant for R1 —
+            the export screen itself is untouched and still routable by URL,
+            so flipping the flag brings the tile straight back. */}
         <section className="px-6 grid grid-cols-2 gap-4">
           <HomeTile icon={TrendingUp} label="Sales" href="/home/sales" />
-          <HomeTile icon={ReceiptText} label="Export CSV" href="/home/export" />
+          {FEATURES.becomeMerchant && (
+            <HomeTile icon={ReceiptText} label="Export CSV" href="/home/export" />
+          )}
           {merchant.completed && (
             <HomeTile icon={ClipboardList} label="Reports" href="/home/reports" />
           )}

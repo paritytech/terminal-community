@@ -25,10 +25,12 @@ function flag(env: string | undefined, fallback: boolean): boolean {
 export const FEATURES = {
   /**
    * "Become a Merchant" onboarding entry points — the Home tile and the
-   * Settings card that lead into /merchant. Off for R1: the flow (and what it
-   * unlocks — Reports, Merchant Profile, Receipt, Show Items in Checkout) is
-   * built but parked until there is more to put behind it. The routes stay
-   * reachable by URL; only the buttons are gated.
+   * Settings card that lead into /merchant — plus the Home "Export CSV" tile.
+   * Off for R1: the flow (and what it unlocks — Reports, Merchant Profile,
+   * Receipt, Show Items in Checkout) is built but parked until there is more
+   * to put behind it. The routes stay reachable by URL; only the buttons are
+   * gated, so /home/export still generates, stores and saves CSV reports and
+   * comes back to Home the moment this flag flips.
    */
   becomeMerchant: flag(process.env.NEXT_PUBLIC_FEATURE_BECOME_MERCHANT, false),
 

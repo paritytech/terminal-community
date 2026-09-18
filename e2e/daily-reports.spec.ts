@@ -36,7 +36,7 @@ test.describe('Daily reports page', () => {
     await expect(empty.or(firstReport)).toBeVisible();
   });
 
-  test('CSV export is reachable from home', async ({ testHost }) => {
+  test('CSV export keeps working while its Home tile is parked', async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await selectMerchantMode(frame);
 
@@ -44,10 +44,17 @@ test.describe('Daily reports page', () => {
     await frame.getByRole('link', { name: 'Home', exact: true }).click();
     await frame.locator('[data-testid="todays-income"]').waitFor();
 
-    // CSV export lives on the Home dashboard now — the Export CSV tile opens
-    // the report-generation screen. (The legacy Settings entry was removed in
-    // the Settings redesign; /settings/export is still routable by URL.)
-    await frame.getByRole('link', { name: 'Export CSV' }).click();
+    // R1 hides the Export CSV tile behind FEATURES.becomeMerchant (off by
+    // default), so nothing on Home leads to the export screen.
+    await expect(frame.getByRole('link', { name: 'Export CSV' })).toHaveCount(0);
+
+    // The screen itself is untouched and still routable by URL — flipping the
+    // flag back puts the tile on Home and lands here. (The legacy Settings
+    // entry was removed in the Settings redesign; /settings/export is still
+    // routable by URL too.)
+    await frame.locator('body').evaluate(() => {
+      window.location.href = '/home/export';
+    });
     await expect(
       frame.getByText('New report'),
     ).toBeVisible({ timeout: 30_000 });
