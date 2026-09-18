@@ -23,6 +23,63 @@
   --scale-font-family-mono: var(--font-martian-mono);
 }
 
+/*
+ * Quiet action surfaces — local theme-layer fix, pending upstream.
+ *
+ * `--bg-action-tertiary` is the fill for the POS keypad keys, the header icon
+ * buttons and the chips, so it has to read as a raised tile against the page.
+ * Only Berlin Night delivers that (#2C2E34 on #0B0C0F). Berlin Day sits one
+ * hair away from the page (#F4F4F5 on #F7F7F8), and Lisbon, Malta and Tokyo
+ * define it as *the same colour as the page* (both `<hue>-100`) — measured
+ * key/page contrast 1.00, i.e. a keypad with no visible keys at all.
+ *
+ * Until the token set gives the quiet action surface its own step, map it one
+ * stop down the theme's own hue here, with the interaction states following
+ * in-hue rather than the stock zinc greys (a grey press flash on a green page
+ * reads as a bug). Recorded in docs-internal/design-system-gaps.md.
+ *
+ * This is the one place app CSS names `--palette-*`, and it is deliberate: it
+ * is a theme-layer override working at the same layer as theme/themes.css,
+ * not a component reaching past the semantic tokens. Component code keeps
+ * using `bg-action-tertiary` and knows nothing about this.
+ *
+ * Selector scoping mirrors themes.css: Berlin Day rides bare `:root`, so the
+ * default has to be `:root:not([data-theme])` — a plain `:root` here would
+ * also outrank every `[data-theme=…]` block (equal specificity, and this file
+ * comes last), silently repainting Berlin Night too. System-dark is restored
+ * to its stock value right below, since Berlin Night already has the step.
+ */
+:root:not([data-theme]),
+[data-theme="berlin-day"] {
+  /* Hover (zinc-300) and active (zinc-200) stay stock — with the resting step
+     lowered they now read as a proper press-darker-than-rest ramp. */
+  --bg-action-tertiary: var(--palette-zinc-150);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg-action-tertiary: var(--palette-zinc-800);
+  }
+}
+
+[data-theme="lisbon"] {
+  --bg-action-tertiary: var(--palette-topaz-200);
+  --bg-action-tertiary-hover: var(--palette-topaz-300);
+  --bg-action-active: var(--palette-topaz-300);
+}
+
+[data-theme="malta"] {
+  --bg-action-tertiary: var(--palette-emerald-200);
+  --bg-action-tertiary-hover: var(--palette-emerald-300);
+  --bg-action-active: var(--palette-emerald-300);
+}
+
+[data-theme="tokyo"] {
+  --bg-action-tertiary: var(--palette-ruby-200);
+  --bg-action-tertiary-hover: var(--palette-ruby-300);
+  --bg-action-active: var(--palette-ruby-300);
+}
+
 html,
 body {
   overflow-x: hidden;

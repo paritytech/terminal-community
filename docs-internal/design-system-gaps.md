@@ -94,6 +94,41 @@ a tonal theme.
 | Raw addresses (`FROM:` / `TO:`) | same | HTML fallback receipt (only when the SVG receipt is missing) | show the business name; addresses behind a details toggle |
 | `coinage.error` shown verbatim | Copy: no technical language in user-facing text | QR screen, coins method | map known errors to plain sentences |
 
+## Token bugs sent back to design
+
+### Quiet action surface has no step on four of the five themes
+
+`--bg-action-tertiary` is the fill for the POS keypad keys, the header icon
+buttons and the chips, so it has to read as a raised tile against the page.
+Measured key-vs-page contrast on the Check out keypad, stock bundle:
+
+| Theme | `--bg-surface-main` | `--bg-action-tertiary` | Contrast |
+| --- | --- | --- | --- |
+| Berlin Night | zinc-950 `#0B0C0F` | zinc-800 `#2C2E34` | **1.44** — the intended look |
+| Berlin Day | zinc-50 `#F7F7F8` | zinc-100 `#F4F4F5` | 1.03 — three units apart |
+| Lisbon | topaz-100 | topaz-100 | **1.00** — same colour |
+| Malta | emerald-100 | emerald-100 | **1.00** — same colour |
+| Tokyo | ruby-100 | ruby-100 | **1.00** — same colour |
+
+On the three tonal themes the keypad has no visible keys at all; the digits
+float on the page surface. Their `--bg-action-tertiary-hover` and
+`--bg-action-active` are also stock zinc greys, so a press on a green or pink
+page flashes grey.
+
+**Stand-in, until the themes give this role its own step:** `app/globals.css`
+re-points the token one stop down each theme's own hue (Berlin Day zinc-150,
+Lisbon topaz-200, Malta emerald-200, Tokyo ruby-200) with the interaction
+states following in-hue. Berlin Night is untouched. That override is the only
+place app CSS names a `--palette-*`, and it works at the theme layer, the same
+layer `theme/themes.css` works at — component code still only writes
+`bg-action-tertiary`. Delete the block when the token lands upstream.
+
+**Also collapsed onto the page surface on the tonal themes** (not worked
+around, no R1 screen depends on them): `--bg-selection-container-active` and
+`--bg-illustration-light-muted`. `--bg-surface-nested` equals the page surface
+on Berlin Day too, so that one reads as intended — nested sits inside a
+container, not on the page.
+
 ## Seam notes
 
 - `npx shadcn add` writes `import { cn } from "cn"` and installs an unrelated
