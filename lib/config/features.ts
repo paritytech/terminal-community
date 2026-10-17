@@ -46,6 +46,14 @@ export const FEATURES = {
    * refunds aren't implemented yet, so the button only said so.
    */
   refunds: flag(process.env.NEXT_PUBLIC_FEATURE_REFUNDS, false),
+
+  /**
+   * Cash out: the Home tile and /home/cash-out, which hand today's sales (or
+   * an amount the merchant types) to getcash to send out of the purse
+   * (lib/payments/cash-out.ts). Off until getcash takes the hand-off's amount
+   * and its bank payout runs outside the sandbox.
+   */
+  cashOut: flag(process.env.NEXT_PUBLIC_FEATURE_CASH_OUT, false),
 } as const;
 
 export type FeatureName = keyof typeof FEATURES;
