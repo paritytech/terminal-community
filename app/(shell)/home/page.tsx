@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ClipboardList, Settings, TrendingUp, ReceiptText, Store } from "lucide-react";
+import { ClipboardList, Landmark, Settings, TrendingUp, ReceiptText, Store } from "lucide-react";
 import { AmountHero } from "@/components/amount-hero";
 import { ScreenHeader } from "@/components/screen-header";
 import { iconButtonClass } from "@/components/subpage-header";
@@ -57,6 +57,9 @@ export default function HomePage() {
             so flipping the flag brings the tile straight back. */}
         <section className="px-6 grid grid-cols-2 gap-4">
           <HomeTile icon={TrendingUp} label="Sales" href="/home/sales" />
+          {FEATURES.cashOut && (
+            <HomeTile icon={Landmark} label="Cash out" href="/home/cash-out" />
+          )}
           {FEATURES.becomeMerchant && (
             <HomeTile icon={ReceiptText} label="Export CSV" href="/home/export" />
           )}
