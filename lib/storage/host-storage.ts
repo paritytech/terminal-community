@@ -56,7 +56,19 @@ async function getStorage(): Promise<StorageDriver> {
 
   if (isInHost()) {
     try {
-      const { hostLocalStorage } = await import("@novasamatech/host-api-wrapper")
+      // Two clients, one store. The codec-2 SDK exposes the same
+      // read/write/clear shape, so only the import differs — but it has to be
+      // chosen, not both loaded (see lib/host/runtime-init.ts).
+      const hostLocalStorage = await (async () => {
+        const { isTruApiRuntime } = await import("@/lib/host/detect")
+        if (isTruApiRuntime()) {
+          const { loadHostSdk } = await import("@/lib/host/sdk")
+          const store = await (await loadHostSdk()).getHostLocalStorage()
+          if (!store) throw new Error("host localStorage unavailable on the TrUAPI runtime")
+          return store
+        }
+        return (await import("@novasamatech/host-api-wrapper")).hostLocalStorage
+      })()
       // Wrap host driver so a runtime error (StorageErr::Unknown when the
       // host bridge is unhealthy) demotes us to memory instead of throwing
       // on every subsequent call.
@@ -77,7 +89,8 @@ async function getStorage(): Promise<StorageDriver> {
         },
         writeJSON: async (key, value) => {
           try {
-            return await hostLocalStorage.writeJSON(key, value)
+            await hostLocalStorage.writeJSON(key, value)
+            return undefined
           } catch (err) {
             demoteToMemory("writeJSON", err)
             return memoryDriver.writeJSON(key, value)
@@ -85,7 +98,8 @@ async function getStorage(): Promise<StorageDriver> {
         },
         clear: async (key) => {
           try {
-            return await hostLocalStorage.clear(key)
+            await hostLocalStorage.clear(key)
+            return undefined
           } catch (err) {
             demoteToMemory("clear", err)
             return memoryDriver.clear(key)
@@ -93,7 +107,7 @@ async function getStorage(): Promise<StorageDriver> {
         },
       }
       console.log("[HostStorage] Using host API localStorage")
-      return _hostStorage
+      return _hostStorage as StorageDriver
     } catch {
       console.warn("[HostStorage] Failed to load hostLocalStorage, using memory fallback")
     }

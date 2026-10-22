@@ -14,7 +14,7 @@ import { T3rminalBulletinIndexABI } from "./abis";
 import { getContractAddresses } from "./config";
 import { getAPI } from "./chain";
 import { claimDefaultAllowances } from "@/lib/host/allowances";
-import { loadAdminQrPayload } from "@/lib/config/admin-qr";
+import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import type { PolkadotSigner } from "polkadot-api";
 
 // ABI interface for encoding/decoding calldata (no network calls)

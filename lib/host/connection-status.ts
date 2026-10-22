@@ -13,12 +13,9 @@ export type HostConnectionFailure =
   /** Not inside a Polkadot host container (plain browser tab). */
   | "not-in-host"
   /**
-   * The Polkadot app runs products on the TrUAPI runtime (Rust core over a
-   * localhost WebSocket bridge). Its bootstrap exposes the same
-   * `__HOST_WEBVIEW_MARK__` / `__HOST_API_PORT__` globals as the native
-   * container, but the core speaks TrUAPI wire codec 2 only, so the
-   * terminal's host-api 0.12 transport (codec 1) is never answered. iOS
-   * nightly builds default to this runtime (`TRUAPI_RUNTIME_DEFAULT`).
+   * The TrUAPI (Rust core) runtime answered, but not with an account. Kept
+   * as its own reason because the two runtimes fail for different causes and
+   * the first question on any report is which one was live.
    */
   | "truapi-runtime"
   /** Inside a host, but the SDK transport refused the environment. */
@@ -51,10 +48,10 @@ export function describeHostConnectionFailure(
       }
     case "truapi-runtime":
       return {
-        title: "Product runtime not supported",
+        title: "No merchant account",
         body:
-          "This Polkadot app build runs products on the TrUAPI runtime. The terminal still speaks the native host protocol, so the host never answers.",
-        hint: "Shake the phone to open Debug Settings, turn off “TrUAPI Runtime”, then restart the app.",
+          "The Polkadot app is running this terminal on its newer product runtime and did not return an account.",
+        hint: "Shake the phone to open Debug Settings and turn “TrUAPI runtime (products)” off to fall back, then restart the app.",
       }
     case "environment":
       return {

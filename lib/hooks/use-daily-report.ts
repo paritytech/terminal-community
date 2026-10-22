@@ -17,7 +17,7 @@ import { calculateCID } from "@/lib/bulletin/cid";
 import { loadManualKey, manualKeyFingerprint } from "@/lib/crypto/manual-key";
 import { encryptReportSymmetric } from "@/lib/crypto/symmetric-report";
 import { journeyTracker, captureError, isExpectedError } from "@/lib/telemetry";
-import { loadAdminQrPayload } from "@/lib/config/admin-qr";
+import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { isOnchainIndexingEnabled } from "@/lib/config/onchain-indexing";
 import type { T3rminalConfigQrPayloadV2 } from "@/lib/config/t3rminal-config-qr";
 

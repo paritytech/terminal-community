@@ -2,7 +2,8 @@
 
 import { useEffect } from "react";
 import { useAccount } from "@/lib/web3";
-import { isInHost } from "@/lib/host/detect";
+import { awaitHostRuntime, isInHost } from "@/lib/host/detect";
+import { hostPaymentsAvailable } from "@/lib/host/payments";
 import { resumePendingTopUpWatches } from "@/lib/payments/coinage/topup-watcher";
 
 /**
@@ -17,9 +18,18 @@ export function TopUpWatcherBoot() {
 
   useEffect(() => {
     if (!account || !isInHost()) return;
-    resumePendingTopUpWatches().catch((err) => {
-      console.warn("[TopUpWatcher] resume failed:", err);
-    });
+    void awaitHostRuntime()
+      .then(() => hostPaymentsAvailable())
+      .then((available) => {
+        // A TrUAPI core without the payment bridge has no statuses to follow.
+        // Sales it would leave confirming are picked up again the next time
+        // the app runs on a host that has them.
+        if (!available) return;
+        return resumePendingTopUpWatches();
+      })
+      .catch((err) => {
+        console.warn("[TopUpWatcher] resume failed:", err);
+      });
   }, [account]);
 
   return null;

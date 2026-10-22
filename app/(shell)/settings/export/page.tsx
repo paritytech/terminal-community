@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, FileDown, Loader2, Download } from "lucide-react";
 import { useAccount } from "@/lib/web3";
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { useBulletin } from "@/lib/hooks/use-bulletin";
 import { captureError } from "@/lib/telemetry";
 import { saveFile } from "@/lib/utils/save-file";

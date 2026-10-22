@@ -4,7 +4,7 @@ import { getTimestampFromSaleId } from "@/lib/utils/sale-id";
 import { buildReceiptDeeplink, type ReceiptItem } from "@/lib/receipts/receipt-generator";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 
 export interface ReceiptData {
   amount: string;

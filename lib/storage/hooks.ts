@@ -10,7 +10,7 @@ import { addSaleRecord, searchSales } from './database';
 import type { SaleRecord, TransactionType } from './types';
 import { useAccount } from '@/lib/web3';
 import { normalizeToAssetHubAddress } from '@/lib/utils/address';
-import { useAdminQrPayload } from '@/lib/config/admin-qr';
+import { useAdminQrPayload } from '@/lib/config/admin-qr-binding';
 
 /**
  * Hook that re-fetches data when a table changes (replaces useLiveQuery)

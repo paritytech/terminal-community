@@ -22,8 +22,6 @@
 "use client"
 
 import { nacl } from "@/lib/crypto/primitives"
-import { hostLocalStorage } from "@novasamatech/host-api-wrapper"
-import { getAccountsProvider } from "@/lib/host/connection"
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -91,7 +89,20 @@ async function deriveFromAccountAlias(): Promise<EncryptionKeypair | null> {
     type AliasResult = {
       match<T>(ok: (v: { alias: Uint8Array }) => T, err: (e: unknown) => T): T
     }
-    const provider = getAccountsProvider() as unknown as {
+    // Codec-1 only: the account alias has no counterpart on the TrUAPI client
+    // yet. Importing the wrapper is also what claims the host port, so the
+    // guard has to come before the import, not after it (see
+    // lib/host/runtime-init.ts).
+    const { isTruApiRuntime } = await import("@/lib/host/detect")
+    if (isTruApiRuntime()) {
+      console.log("[Crypto] account alias unavailable on the TrUAPI runtime")
+      return null
+    }
+
+    const { sandboxTransport, createAccountsProvider } = await import(
+      "@novasamatech/host-api-wrapper"
+    )
+    const provider = createAccountsProvider(sandboxTransport) as unknown as {
       getProductAccountAlias?: (id: string, idx?: number) => PromiseLike<AliasResult>
     }
 
@@ -135,8 +146,17 @@ async function deriveFromAccountAlias(): Promise<EncryptionKeypair | null> {
 // ── Storage helpers (cache / standalone fallback) ───────────────
 
 async function getStorage() {
-  const { isInHost } = await import("@/lib/host/detect")
-  if (isInHost()) return hostLocalStorage
+  const { isInHost, isTruApiRuntime } = await import("@/lib/host/detect")
+  if (isInHost()) {
+    if (isTruApiRuntime()) {
+      const { loadHostSdk } = await import("@/lib/host/sdk")
+      const store = await (await loadHostSdk()).getHostLocalStorage()
+      if (store) return store
+    } else {
+      const { hostLocalStorage } = await import("@novasamatech/host-api-wrapper")
+      return hostLocalStorage
+    }
+  }
   // Memory fallback for dev
   const mem: Record<string, any> = (globalThis as any).__cryptoStore ??= {}
   return {
@@ -344,11 +364,19 @@ export async function inspectKeypair(): Promise<KeypairDiagnostics> {
       type AliasResult = {
         match<T>(ok: (v: { alias: Uint8Array }) => T, err: (e: unknown) => T): T
       }
-      const provider = getAccountsProvider() as unknown as {
-        getProductAccountAlias?: (id: string, idx?: number) => PromiseLike<AliasResult>
-      }
+      const { isTruApiRuntime } = await import("@/lib/host/detect")
+      const provider = isTruApiRuntime()
+        ? null
+        : await (async () => {
+            const { sandboxTransport, createAccountsProvider } = await import(
+              "@novasamatech/host-api-wrapper"
+            )
+            return createAccountsProvider(sandboxTransport) as unknown as {
+              getProductAccountAlias?: (id: string, idx?: number) => PromiseLike<AliasResult>
+            }
+          })()
 
-      if (typeof provider.getProductAccountAlias === "function") {
+      if (provider && typeof provider.getProductAccountAlias === "function") {
         const aliasResult = await provider.getProductAccountAlias(identifier, 0)
         aliasResult.match<void>(
           (value) => {

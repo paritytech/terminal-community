@@ -28,7 +28,7 @@
 
 "use client";
 
-import { createPaymentManager } from "@novasamatech/host-api-wrapper";
+import { createClaimHost, deferredSubscription } from "@/lib/host/payments";
 import {
   getSalesAwaitingClaimFinality,
   markSaleFinalized,
@@ -72,16 +72,27 @@ function log(message: string): void {
   console.log(`[TopUpWatcher] ${message}`);
 }
 
-const defaultDeps = (): TopUpWatcherDeps => {
-  const manager = createPaymentManager();
-  return {
-    host: { subscribeTopUpStatus: (id, cb) => manager.subscribeTopUpStatus(id, cb) },
-    markSaleFinalized: (saleId) => markSaleFinalized(saleId),
-    recordSaleClaimShortfall,
-    markSaleReverted,
-    getSalesAwaitingClaimFinality,
-  };
-};
+// The status half of this launch's claim host (lib/host/payments), shared by
+// every watch. A failed build is not kept, so a later watch tries again.
+let statusHost: Promise<ClaimHost> | null = null;
+function loadStatusHost(): Promise<ClaimHost> {
+  statusHost ??= createClaimHost((call) => call()).catch((error: unknown) => {
+    statusHost = null;
+    throw error;
+  });
+  return statusHost;
+}
+
+const defaultDeps = (): TopUpWatcherDeps => ({
+  host: {
+    subscribeTopUpStatus: (id, cb) =>
+      deferredSubscription(async () => (await loadStatusHost()).subscribeTopUpStatus(id, cb)),
+  },
+  markSaleFinalized: (saleId) => markSaleFinalized(saleId),
+  recordSaleClaimShortfall,
+  markSaleReverted,
+  getSalesAwaitingClaimFinality,
+});
 
 // Keyed by saleId — one watch per sale, however many callers ask.
 const active = new Map<string, AbortController>();

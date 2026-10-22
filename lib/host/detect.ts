@@ -1,33 +1,65 @@
 /**
- * Host environment detection — thin wrapper around `@parity/product-sdk/host`.
+ * Host environment detection.
  *
- * We delegate to the SDK rather than maintaining our own iframe / webview-mark
- * heuristics so t3rminal stays consistent with merchant-terminal and w3spay
- * (both use the same SDK detection) and picks up additional signals like
- * `__HOST_API_PORT__` and the product-sdk sandbox handshake.
+ * The check is deliberately local rather than delegated to
+ * `@parity/product-sdk/host`: that package carries its own copy of
+ * `@parity/truapi`, and a second copy of the transport is not inert — the
+ * first thing either client does on a webview is claim
+ * `window.__HOST_API_PORT__.onmessage`, so two copies silently take each
+ * other's replies. Dropping the import keeps exactly one transport in the
+ * bundle, the one ./sdk.ts chooses.
  *
- * The `HostEnvironment` distinction (desktop-webview vs web-iframe vs
- * standalone) is kept locally because the SDK only exposes a boolean.
+ * The signals are the three every Polkadot host publishes, and the same three
+ * the SDK tested: an iframe parent, the webview mark, or the injected port.
+ *
+ * The `HostEnvironment` split (desktop-webview vs web-iframe vs standalone)
+ * is ours; the hosts expose only the raw signals.
  */
 
-import { isInsideContainerSync } from "@parity/product-sdk/host"
+type HostGlobals = {
+  __HOST_WEBVIEW_MARK__?: boolean
+  /** Where lib/host/runtime-init.ts parks the mark on a TrUAPI launch. */
+  __T3R_HOST_WEBVIEW_MARK__?: boolean
+  /** What that script concluded: "truapi" | "native", or absent while it waits. */
+  __T3R_HOST_RUNTIME__?: "truapi" | "native"
+  __HOST_API_PORT__?: unknown
+  __truapi_localhost?: unknown
+  /** Newer cores build the TrUAPI client in the page and hand it over here. */
+  __HOST_API_CLIENT__?: { client?: unknown } | null
+  /** The native container installs this when it loads. */
+  __container_callback__?: unknown
+}
+
+/** The webview mark, wherever the boot guard left it. */
+function webviewMark(win: HostGlobals): boolean {
+  return win.__HOST_WEBVIEW_MARK__ === true || win.__T3R_HOST_WEBVIEW_MARK__ === true
+}
+
+function hostGlobals(): HostGlobals | null {
+  return typeof window === "undefined" ? null : (window as HostGlobals)
+}
+
+function isIframe(): boolean {
+  try {
+    return typeof window !== "undefined" && window !== window.top
+  } catch {
+    // A cross-origin parent throws on access, which is itself the answer.
+    return true
+  }
+}
 
 export type HostEnvironment = "desktop-webview" | "web-iframe" | "standalone"
 
 export function detectHostEnvironment(): HostEnvironment {
-  if (typeof window === "undefined") return "standalone"
-
-  if (!isInsideContainerSync()) return "standalone"
-
-  // Inside a container — disambiguate desktop webview vs web iframe.
-  if ((window as { __HOST_WEBVIEW_MARK__?: boolean }).__HOST_WEBVIEW_MARK__ === true) {
-    return "desktop-webview"
-  }
-  return "web-iframe"
+  if (!isInHost()) return "standalone"
+  const win = hostGlobals()
+  return win && webviewMark(win) ? "desktop-webview" : "web-iframe"
 }
 
 export function isInHost(): boolean {
-  return isInsideContainerSync()
+  const win = hostGlobals()
+  if (!win) return false
+  return isIframe() || webviewMark(win) || win.__HOST_API_PORT__ != null
 }
 
 /**
@@ -40,9 +72,12 @@ export function isInHost(): boolean {
  * Checked before connecting so the merchant sees a reason instead of a spinner.
  */
 export function isTruApiRuntime(): boolean {
-  if (typeof window === "undefined") return false
-  const marker = (window as { __truapi_localhost?: unknown }).__truapi_localhost
-  return marker !== undefined && marker !== null
+  const win = hostGlobals()
+  if (!win) return false
+  // `__HOST_API_CLIENT__` first: the lockdown container consumes
+  // `__truapi_localhost`, so on newer cores that one reads as `undefined`
+  // even though the runtime is very much TrUAPI.
+  return win.__HOST_API_CLIENT__ != null || win.__truapi_localhost != null
 }
 
 /**
@@ -64,9 +99,52 @@ export function isProductWebSocketBlocked(): boolean {
   }
 }
 
+/** Async variant, kept for call sites that await detection during boot. */
+export async function isInHostAsync(): Promise<boolean> {
+  return isInHost()
+}
+
 /**
- * Async variant — also performs the product-sdk sandbox handshake. Use this
- * when you can afford an await and need the strongest detection (e.g., during
- * app boot before triggering host-only flows).
+ * Which runtime this launch is on, once that is actually known.
+ *
+ * `isTruApiRuntime()` reads a global, and on Android that global can arrive
+ * late: the bootstrap is registered only after the TrUAPI execution opens, so
+ * on a cold start it can land after the page's own scripts. A launch that
+ * asked too early answered "native", connected with the codec-1 client, and
+ * died ten seconds later on a handshake the Rust core never answers — which is
+ * exactly what the device showed on 2026-09-29.
+ *
+ * So the connection waits for the answer instead of sampling it. It resolves
+ * the moment either runtime identifies itself, and falls back to the native
+ * container if neither does — that is the one that works on every host that
+ * predates TrUAPI.
  */
-export { isInsideContainer as isInHostAsync } from "@parity/product-sdk/host"
+export async function awaitHostRuntime(timeoutMs = 3000): Promise<"truapi" | "native"> {
+  const win = hostGlobals()
+  if (!win) return "native"
+
+  const settled = (): "truapi" | "native" | null => {
+    if (win.__HOST_API_CLIENT__ != null || win.__truapi_localhost != null) return "truapi"
+    if (typeof win.__container_callback__ === "function") return "native"
+    return win.__T3R_HOST_RUNTIME__ ?? null
+  }
+
+  const now = settled()
+  if (now) return now
+
+  return new Promise((resolve) => {
+    const finish = (value: "truapi" | "native") => {
+      clearInterval(timer)
+      clearTimeout(deadline)
+      window.removeEventListener("truapi-native-ready", onReady)
+      resolve(value)
+    }
+    const onReady = () => finish("truapi")
+    window.addEventListener("truapi-native-ready", onReady)
+    const timer = setInterval(() => {
+      const value = settled()
+      if (value) finish(value)
+    }, 50)
+    const deadline = setTimeout(() => finish("native"), timeoutMs)
+  })
+}

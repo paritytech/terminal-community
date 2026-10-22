@@ -6,7 +6,7 @@ import { CalendarDays, Check, Files, FileText, Loader2 } from "lucide-react";
 import { SubpageHeader } from "@/components/subpage-header";
 import { Button } from "@/components/ui/button";
 import { useAccount } from "@/lib/web3";
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { useBulletin } from "@/lib/hooks/use-bulletin";
 import { useSalesHistory, addCsvReport, getAllCsvReports, type CsvReportRecord, type SaleRecord } from "@/lib/storage";
 import { captureError } from "@/lib/telemetry";

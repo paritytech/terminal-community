@@ -12,7 +12,7 @@
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 
 export function SentryTags() {
   const payload = useAdminQrPayload();

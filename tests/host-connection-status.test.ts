@@ -16,9 +16,11 @@ describe("describeHostConnectionFailure", () => {
     }
   });
 
-  it("tells the tester how to leave the TrUAPI runtime", () => {
+  it("tells the tester how to fall back off the TrUAPI runtime", () => {
+    // The runtime is supported now (codec 2), so this reason means "connected
+    // but no account" — the hint is a way back, not the only way forward.
     const copy = describeHostConnectionFailure("truapi-runtime");
-    expect(copy.body).toMatch(/TrUAPI/);
+    expect(copy.body).toMatch(/did not return an account/);
     expect(copy.hint).toMatch(/Debug Settings/);
   });
 

@@ -27,7 +27,7 @@ import { type PeriodReportArgs } from "@/lib/hooks/use-daily-report";
 import { useReportJob } from "@/lib/components/report-job-provider";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
 import { useAccount } from "@/lib/web3";
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { useAssetSymbol } from "@/lib/utils/asset-metadata";
 import type { DailyReportRecord } from "@/lib/storage/types";
 import { isHostPrinterAvailable, printHostDocument, type PrintDocumentKind } from "@/lib/host/printing";

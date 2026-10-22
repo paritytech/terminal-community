@@ -28,11 +28,10 @@ import {
 import { overwriteCatalogFromQr } from "@/lib/items/catalog";
 import { registerSecret } from "@/lib/telemetry/scrub";
 import { getSetting, setSetting } from "@/lib/storage/database";
+import { ADMIN_QR_PAYLOAD_SETTING } from "./admin-qr-binding";
 
 /** Settings key holding the raw uppercase UR string of the most recent scan. */
 export const ADMIN_QR_RAW_SETTING = "admin-qr/raw";
-/** Settings key holding the decoded v2 payload (JSON of the strongly-typed object). */
-export const ADMIN_QR_PAYLOAD_SETTING = "admin-qr/payload-v2";
 
 export type AdminQrScanOutcome =
   | { readonly kind: "v2-imported"; readonly payload: T3rminalConfigQrPayloadV2 }
@@ -98,22 +97,15 @@ export async function importAdminQrConfig(
  * the merchant profile and the host product account. The import/scan helpers
  * above are kept intact for when the flow returns; any previously stored
  * payload stays in storage but is never read.
+ *
+ * Lives in ./admin-qr-binding so the five screens that only ask for the
+ * binding never pull the CBOR decoder (and the built-in shims it carries)
+ * into the boot graph — see that module's header.
  */
-export async function loadAdminQrPayload(): Promise<T3rminalConfigQrPayloadV2 | null> {
-  return null;
-}
+export { ADMIN_QR_PAYLOAD_SETTING, loadAdminQrPayload, useAdminQrPayload } from "./admin-qr-binding";
 
 /** Return the most recent raw UR text, or `null` if none stored. */
 export async function loadAdminQrRaw(): Promise<string | null> {
   const raw = await getSetting(ADMIN_QR_RAW_SETTING);
   return raw ?? null;
-}
-
-/**
- * RETIRED (2026-08) — see {@link loadAdminQrPayload}. Always `null`: no
- * admin binding exists until the Back Office flow returns. The hook shape
- * is kept so the (many) call sites stay untouched.
- */
-export function useAdminQrPayload(): T3rminalConfigQrPayloadV2 | null | undefined {
-  return null;
 }
