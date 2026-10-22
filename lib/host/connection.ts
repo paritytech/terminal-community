@@ -10,9 +10,9 @@
  *   codec 1  `@novasamatech/host-api-wrapper` — the native container, still
  *            what every release build of the phone apps, Desktop and dot.li
  *            run.
- *   codec 2  `@parity/product-sdk-host` over the TrUAPI Rust core — Android
- *            debug builds and iOS nightly. Newer cores speak codec 3 through
- *            the client they publish, which ./sdk.ts adopts.
+ *   TrUAPI   `@parity/product-sdk-host` over the TrUAPI Rust core — Android
+ *            debug builds and iOS nightly. The SDK uses the client the host
+ *            publishes, so the codec (2 or 3) is the host's (see ./sdk.ts).
  *
  * Everything above this module asks for `getAccountsPort()` and gets the same
  * shape either way. Which client backs it is decided once per launch by
@@ -25,9 +25,16 @@
  * here is imported at the top of the file.
  */
 
-import type { PolkadotSigner } from "polkadot-api"
+import type { AccountsProvider } from "@parity/product-sdk-host"
 import { awaitHostRuntime, isInHost } from "./detect"
 import { loadHostSdk } from "./sdk"
+
+/**
+ * An account's signer: a polkadot-api v3 `TxCreator` with the standard
+ * extensions and nonce filled in, plus `publicKey` and `signBytes` — what
+ * `tx.createSubmitAndWatch(creator)` takes. Both codecs hand one back.
+ */
+export type HostTxCreator = ReturnType<AccountsProvider["getProductAccountSigner"]>
 
 /** A product-derived account, in the shape both clients agree on. */
 export interface HostProductAccount {
@@ -50,9 +57,9 @@ export interface HostLegacyAccount {
 export interface HostAccountsPort {
   readonly codec: 1 | 2
   getProductAccount(identifier: string, derivationIndex: number): Promise<HostProductAccount | null>
-  getProductAccountSigner(account: HostProductAccount): PolkadotSigner
+  getProductAccountSigner(account: HostProductAccount): HostTxCreator
   getLegacyAccounts(): Promise<HostLegacyAccount[]>
-  getLegacyAccountSigner(account: HostLegacyAccount): PolkadotSigner | null
+  getLegacyAccountSigner(account: HostLegacyAccount): HostTxCreator | null
   /** Fires with the host's connection state; returns an unsubscribe. */
   subscribeConnectionStatus(onStatus: (connected: boolean) => void): () => void
 }
@@ -82,9 +89,6 @@ async function createTruApiPort(): Promise<HostAccountsPort | null> {
       )
     },
     getProductAccountSigner(account) {
-      // The codec-2 SDK returns a PAPI signer whose `signTx` already sends a
-      // runtime-listed `txExtVersion`, so the codec-1 workaround in
-      // ./product-signer.ts is not needed on this path.
       return accounts.getProductAccountSigner({
         dotNsIdentifier: account.dotNsIdentifier,
         derivationIndex: account.derivationIndex,
@@ -124,12 +128,12 @@ async function createLegacyPort(): Promise<HostAccountsPort | null> {
   }
   const provider = createAccountsProvider(sandboxTransport) as unknown as {
     getProductAccount?: (id: string, index: number) => { match: <T>(ok: (v: { publicKey: Uint8Array }) => T, err: (e: unknown) => T) => Promise<T> }
-    getProductAccountSigner?: (account: unknown, slot: string) => unknown
+    getProductAccountSigner?: (account: unknown, slot: string) => Pick<HostTxCreator, "signBytes">
     getLegacyAccounts?: () => { match: <T>(ok: (v: Array<{ publicKey: Uint8Array; name?: string }>) => T, err: (e: unknown) => T) => Promise<T> }
-    getLegacyAccountSigner?: (account: unknown) => PolkadotSigner
+    getLegacyAccountSigner?: (account: unknown) => HostTxCreator
     subscribeAccountConnectionStatus: (cb: (s: string) => void) => { unsubscribe: () => void }
   }
-  const { createProductAccountSigner } = await import("./product-signer")
+  const { createProductAccountTxCreator } = await import("./product-signer")
 
   return {
     codec: 1,
@@ -144,12 +148,10 @@ async function createLegacyPort(): Promise<HostAccountsPort | null> {
       )
     },
     getProductAccountSigner(account) {
-      // The wrapper derives a `txExtVersion` the runtime rejects; ./product-signer
-      // replaces `signTx` with one that sends a listed version.
-      return createProductAccountSigner(
-        account,
-        provider.getProductAccountSigner!(account, "createTransaction") as never,
-      )
+      // The wrapper's creator sends a `txExtVersion` the runtime rejects
+      // (./product-signer); only its byte signing is kept.
+      const { signBytes } = provider.getProductAccountSigner!(account, "createTransaction")
+      return createProductAccountTxCreator(account, (data) => signBytes(data))
     },
     async getLegacyAccounts() {
       if (typeof provider.getLegacyAccounts !== "function") return []

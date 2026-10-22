@@ -4,7 +4,7 @@
  * Routes all chain RPC through the Polkadot Desktop host container, with a WS
  * fallback for chains the host doesn't yet expose.
  *
- * On polkadot-api v2 every layer (`getWsProvider`, product-sdk's
+ * Since polkadot-api v2 every layer (`getWsProvider`, the host wrapper's
  * `createPapiProvider`, `createClient`) speaks `JsonRpcMessage` objects, so
  * no string↔object adapters are needed.
  */

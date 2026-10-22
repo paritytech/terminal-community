@@ -23,9 +23,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { createClient, Binary, FixedSizeBinary } from "polkadot-api";
+import { createClient, Binary } from "polkadot-api";
 import { getWsProvider } from "@polkadot-api/ws-provider";
-import { getPolkadotSigner, type PolkadotSigner } from "polkadot-api/signer";
+import { getTxCreator, type SignerTxCreator } from "polkadot-api/tx-creator";
 import { AccountId } from "@polkadot-api/substrate-bindings";
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import {
@@ -63,7 +63,7 @@ export interface DeployResult {
 }
 
 interface SignerBundle {
-  signer: PolkadotSigner;
+  signer: SignerTxCreator;
   publicKey: Uint8Array;
   ss58: string;
   h160: `0x${string}`;
@@ -101,7 +101,7 @@ function createSigner(seed: string): SignerBundle {
   const keyPair = derive("");
   const publicKey = keyPair.publicKey;
   return {
-    signer: getPolkadotSigner(publicKey, "Sr25519", keyPair.sign),
+    signer: getTxCreator(publicKey, "Sr25519", keyPair.sign),
     publicKey,
     ss58: AccountId(42).dec(publicKey),
     h160: deriveH160(publicKey),
@@ -171,9 +171,6 @@ function extractHex(value: unknown): `0x${string}` | undefined {
   if (typeof value === "string" && value.startsWith("0x")) {
     return value as `0x${string}`;
   }
-  if (value && typeof (value as { asHex?: unknown }).asHex === "function") {
-    return (value as { asHex(): `0x${string}` }).asHex();
-  }
   if (value instanceof Uint8Array) {
     return `0x${bytesToHex(value)}` as `0x${string}`;
   }
@@ -197,9 +194,9 @@ function isAccountAlreadyMapped(err: unknown): boolean {
  * dispatched from the Substrate signed origin, so an unmapped account can run
  * it.
  */
-async function ensureMapped(api: any, signer: PolkadotSigner): Promise<void> {
+async function ensureMapped(api: any, signer: SignerTxCreator): Promise<void> {
   ui.step("Mapping deployer account (pallet-revive)…");
-  const result = await api.tx.Revive.map_account().signAndSubmit(signer);
+  const result = await api.tx.Revive.map_account().createAndSubmit(signer);
   if (result.ok) {
     ui.success(`Account mapped — ${result.txHash}`);
     return;
@@ -213,7 +210,7 @@ async function ensureMapped(api: any, signer: PolkadotSigner): Promise<void> {
 
 async function deployContract(
   api: any,
-  signer: PolkadotSigner,
+  signer: SignerTxCreator,
   origin: string,
   dryRunDeposit: bigint,
 ): Promise<{ contractAddress: `0x${string}`; txHash: string }> {
@@ -259,7 +256,7 @@ async function deployContract(
     salt: undefined,
   });
 
-  const result = await tx.signAndSubmit(signer);
+  const result = await tx.createAndSubmit(signer);
   if (!result.ok) {
     throw new Error(`${CONTRACT_LABEL} deployment failed: ${stringify(result.dispatchError)}`);
   }
@@ -356,7 +353,7 @@ async function verifyContractOnChain(
   expectedCodeHash: string,
 ): Promise<"match" | "mismatch" | "absent" | "unknown"> {
   try {
-    const onChain = await api.apis.ReviveApi.code(FixedSizeBinary.fromHex(address));
+    const onChain = await api.apis.ReviveApi.code(address);
     const codeHex = extractHex(onChain);
     if (codeHex === undefined) return "unknown";
     if (codeHex === "0x") return "absent";

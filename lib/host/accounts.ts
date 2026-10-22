@@ -6,10 +6,10 @@
  *  1. **Product account** (`getProductAccount(identifier, 0)`) — preferred.
  *     Polkadot Desktop ≥ 0.7.5 (commit 835a3a9) accepts both `.dot` domains
  *     and `localhost:PORT` identifiers, so this works in both prod and dev.
- *     Signing goes through the `createTransaction` host slot; the signer is
- *     the wrapper's with `signTx` replaced (lib/host/product-signer.ts) so the
- *     `txExtVersion` it sends is one the runtime actually lists — the wrapper's
- *     own derivation is rejected by Polkadot App ≥ PR #1004.
+ *     Signing goes through the `createTransaction` host slot. On codec 1 the
+ *     creator is the SDK's (lib/host/product-signer.ts), so the `txExtVersion`
+ *     it sends is one the runtime actually lists — the wrapper's own choice is
+ *     rejected by Polkadot App ≥ PR #1004.
  *
  *  2. **Legacy account** (`getLegacyAccounts`) — kept as fallback for hosts
  *     that don't yet ship the localhost-identifier feature, or 0.6.x hosts.
@@ -21,13 +21,13 @@
 "use client"
 
 import { AccountId } from "polkadot-api"
-import type { PolkadotSigner } from "polkadot-api"
 import type { Account } from "@/lib/web3/types/web3"
 import { WalletProviderType } from "@/lib/web3/types/web3"
-import { getAccountsPort } from "./connection"
+import { getAccountsPort, type HostTxCreator } from "./connection"
 
 export interface HostAccount extends Account {
-  polkadotSigner: PolkadotSigner
+  /** Signs this account's transactions: pass it to `tx.createSubmitAndWatch`. */
+  txCreator: HostTxCreator
   publicKey: Uint8Array
 }
 
@@ -87,7 +87,7 @@ async function tryProductAccount(): Promise<HostAccount[] | null> {
         name: `T3rminal merchant`,
         address,
         provider: WalletProviderType.HostAPI,
-        polkadotSigner: port.getProductAccountSigner(account),
+        txCreator: port.getProductAccountSigner(account),
         publicKey: account.publicKey,
       },
     ] satisfies HostAccount[]
@@ -121,7 +121,7 @@ async function tryLegacyAccounts(): Promise<HostAccount[] | null> {
           name: acc.name || "Host Account",
           address,
           provider: WalletProviderType.HostAPI,
-          polkadotSigner: signer,
+          txCreator: signer,
           publicKey: acc.publicKey,
         },
       ]

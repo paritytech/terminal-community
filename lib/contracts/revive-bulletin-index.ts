@@ -15,7 +15,7 @@ import { getContractAddresses } from "./config";
 import { getAPI } from "./chain";
 import { claimDefaultAllowances } from "@/lib/host/allowances";
 import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding";
-import type { PolkadotSigner } from "polkadot-api";
+import type { HostTxCreator } from "@/lib/host/connection";
 
 // ABI interface for encoding/decoding calldata (no network calls)
 const iface = new ethers.Interface(T3rminalBulletinIndexABI);
@@ -172,7 +172,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
  */
 export async function storeDailyReportViaRevive(
   origin: string,
-  signer: PolkadotSigner,
+  signer: HostTxCreator,
   params: {
     merchantId: string;
     terminalId: string;
@@ -216,7 +216,7 @@ export async function storeDailyReportViaRevive(
   const unsafeApi = client.raw.assetHub.getUnsafeApi();
   type WatchableTx = {
     decodedCall: unknown;
-    signSubmitAndWatch(signer: PolkadotSigner, opts?: unknown): {
+    createSubmitAndWatch(creator: HostTxCreator, opts?: unknown): {
       subscribe(observer: { next(ev: unknown): void; error(e: unknown): void }): { unsubscribe(): void };
     };
   };
@@ -296,7 +296,7 @@ export async function storeDailyReportViaRevive(
 
   // Oracle: poll `getCID(merchantId, terminalId, date)` to detect inclusion via
   // state read. Workaround for chains whose host-bridge `chainHead_v1_follow`
-  // never delivers `txBestBlocksState` to PAPI's `signSubmitAndWatch` — the tx
+  // never delivers `inBestBlock` to PAPI's `createSubmitAndWatch` — the tx
   // lands on-chain but the watcher hangs forever otherwise. Once our CID
   // appears in storage, the tx is in a block and we can resolve.
   const expectedCid = params.cid;
@@ -321,7 +321,7 @@ export async function storeDailyReportViaRevive(
         value: BigInt(0),
         weight_limit: { ref_time: BigInt("50000000000"), proof_size: BigInt("1000000") },
         storage_deposit_limit: BigInt("10000000000"),
-        data: Binary.fromHex(calldata as `0x${string}`) as unknown as Uint8Array,
+        data: Binary.fromHex(calldata as `0x${string}`),
       }),
       signer,
       submitOpts,
@@ -351,8 +351,8 @@ export async function storeDailyReportViaRevive(
 }
 
 /**
- * `signSubmitAndWatch` with a dual resolution path:
- *   - PAPI `txBestBlocksState.found` fires → resolve (happy path).
+ * `createSubmitAndWatch` with a dual resolution path:
+ *   - PAPI `inBestBlock` fires → resolve (happy path).
  *   - Oracle returns true → resolve (workaround for chains where chainHead
  *     follow doesn't deliver state events to the host bridge).
  *
@@ -360,11 +360,11 @@ export async function storeDailyReportViaRevive(
  */
 function watchTx(
   tx: {
-    signSubmitAndWatch(signer: PolkadotSigner, opts?: unknown): {
+    createSubmitAndWatch(creator: HostTxCreator, opts?: unknown): {
       subscribe(observer: { next(ev: unknown): void; error(e: unknown): void }): { unsubscribe(): void };
     };
   },
-  signer: PolkadotSigner,
+  signer: HostTxCreator,
   submitOpts: unknown,
   inclusionOracle: (() => Promise<boolean>) | undefined,
   label: string,
@@ -376,7 +376,7 @@ function watchTx(
     let settled = false;
     let pollLoopStopped = false;
     let broadcastedHash: `0x${string}` | undefined;
-    let signedHash: `0x${string}` | undefined;
+    let createdHash: `0x${string}` | undefined;
     let watchdogStarted = false;
     let stallTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -401,10 +401,10 @@ function watchTx(
     };
 
     // Arm the stall watchdog and start the inclusion-oracle poll. Called on the
-    // FIRST of `signed` / `broadcasted` — some host bridges never deliver the
+    // FIRST of `created` / `broadcasted` — some host bridges never deliver the
     // `broadcasted` event even though the tx goes out, and previously that
     // meant no watchdog and no oracle: the flow hung until the outer report
-    // timeout. Starting at `signed` costs at most one early (false) oracle
+    // timeout. Starting at `created` costs at most one early (false) oracle
     // poll and removes that hang mode. Idempotent.
     const startWatchdog = () => {
       if (watchdogStarted || settled) return;
@@ -419,9 +419,9 @@ function watchTx(
               const landed = await inclusionOracle();
               if (landed) {
                 console.log(`[${label}] inclusion oracle: landed (state read confirms tx effect)`);
-                // Prefer the broadcast hash; fall back to the signed hash so a
+                // Prefer the broadcast hash; fall back to the created hash so a
                 // missing `broadcasted` event can't leave the promise pending.
-                succeed((broadcastedHash ?? signedHash ?? "0x") as `0x${string}`);
+                succeed((broadcastedHash ?? createdHash ?? "0x") as `0x${string}`);
                 return;
               }
               armStall();
@@ -434,12 +434,12 @@ function watchTx(
       }
     };
 
-    const sub = tx.signSubmitAndWatch(signer, submitOpts).subscribe({
+    const sub = tx.createSubmitAndWatch(signer, submitOpts).subscribe({
       next(ev: unknown) {
-        const e = ev as { type?: string; found?: boolean; ok?: boolean; dispatchError?: unknown; txHash?: string; block?: { hash: string; number: number } };
-        if (e.type === "signed") {
-          signedHash = e.txHash as `0x${string}` | undefined;
-          console.log(`[${label}] signed (txHash=${e.txHash?.slice(0, 12)}…)`);
+        const e = ev as { type?: string; ok?: boolean; dispatchError?: unknown; txHash?: string; block?: { hash: string; number: number } };
+        if (e.type === "created") {
+          createdHash = e.txHash as `0x${string}` | undefined;
+          console.log(`[${label}] created (txHash=${e.txHash?.slice(0, 12)}…)`);
           startWatchdog();
         }
         if (e.type === "broadcasted") {
@@ -447,7 +447,7 @@ function watchTx(
           console.log(`[${label}] broadcasted`);
           startWatchdog();
         }
-        if (e.type === "txBestBlocksState" && e.found) {
+        if (e.type === "inBestBlock") {
           armStall();
           if (e.ok === false) {
             if (settled) return;
@@ -458,12 +458,12 @@ function watchTx(
             reject(new Error(`[${label}] dispatch error: ${JSON.stringify(e.dispatchError)}`));
             return;
           }
-          console.log(`[${label}] txBestBlocksState.found in block ${e.block?.hash?.slice(0, 12)}…`);
-          succeed((e.block?.hash ?? broadcastedHash ?? signedHash ?? "0x") as `0x${string}`);
+          console.log(`[${label}] inBestBlock in block ${e.block?.hash?.slice(0, 12)}…`);
+          succeed((e.block?.hash ?? broadcastedHash ?? createdHash ?? "0x") as `0x${string}`);
         }
         if (e.type === "finalized") {
           console.log(`[${label}] finalized (block ${e.block?.hash?.slice(0, 12)}…)`);
-          if (!settled) succeed((e.block?.hash ?? broadcastedHash ?? signedHash ?? "0x") as `0x${string}`);
+          if (!settled) succeed((e.block?.hash ?? broadcastedHash ?? createdHash ?? "0x") as `0x${string}`);
           try { sub.unsubscribe(); } catch { /* noop */ }
         }
       },
