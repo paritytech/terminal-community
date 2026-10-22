@@ -90,11 +90,23 @@ jobs:
           NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS: ${{ vars.NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS }}
           NEXT_PUBLIC_ASSET_HUB_WS: ${{ vars.NEXT_PUBLIC_ASSET_HUB_WS }}
 
+      # Kubo straight from its GitHub release. The download action fetched it
+      # from dist.ipfs.tech with no timeout; when that host stopped answering
+      # (2026-10-20) every deploy hung ~30 min in this step and then failed.
+      # The action's v2 reads GitHub releases, but it requires a published
+      # SHA-256 digest, which v0.33.0 lacks, so the release's own .sha512
+      # checks the archive here instead.
       - name: Setup IPFS
-        uses: ipfs/download-ipfs-distribution-action@v1
-        with:
-          name: kubo
-          version: v0.33.0
+        timeout-minutes: 5
+        run: |
+          KUBO=v0.33.0
+          FILE="kubo_${KUBO}_linux-amd64.tar.gz"
+          BASE="https://github.com/ipfs/kubo/releases/download/${KUBO}"
+          curl -fsSL --retry 5 --connect-timeout 20 --max-time 300 -O "$BASE/$FILE" -O "$BASE/$FILE.sha512"
+          sha512sum -c "$FILE.sha512"
+          tar -xzf "$FILE"
+          sudo install kubo/ipfs /usr/local/bin/ipfs
+          ipfs version
       - run: ipfs init
 
       - name: Install deploy tool
