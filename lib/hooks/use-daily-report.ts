@@ -467,7 +467,7 @@ export function useDailyReport(): UseDailyReportReturn {
 
             await storeDailyReportViaRevive(
               hostAccount.address,
-              hostAccount.polkadotSigner,
+              hostAccount.txCreator,
               {
                 merchantId,
                 terminalId,

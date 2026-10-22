@@ -28,18 +28,18 @@
  * `payment.topUpStatusSubscribe(id)` with the same five statuses. So the claim,
  * its retry and the background finality watcher run unchanged on both codecs.
  *
- * Those calls go straight to the TrUAPI client rather than through
- * `@parity/product-sdk-host`: no SDK release both speaks the 0.26 payment
- * shape and keeps the PAPI 2 signer this app is built on (0.26 and later move
- * to PAPI 3). On a host that publishes its own client (lib/host/sdk.ts) the
- * client *is* the host's, so the shape always matches the host. A client
- * without `topUpStatusSubscribe` belongs to a core that predates payments,
- * and is reported as unsupported.
+ * Those calls go straight to the TrUAPI client rather than through the SDK's
+ * `getPaymentManager()`, which (0.29) registers a top-up by id but has no way
+ * to follow its status. On a host that publishes its own client
+ * (lib/host/sdk.ts) the client *is* the host's, so the shape always matches
+ * the host. A client without `topUpStatusSubscribe` belongs to a core that
+ * predates payments, and is reported as unsupported.
  */
 
 import { PaymentTopUpErr } from "@novasamatech/host-api";
 import type { ClaimHost, TopUpStatusEvent } from "@/lib/payments/coinage/claim";
 import { isTruApiRuntime } from "./detect";
+import type { TruApi } from "@parity/product-sdk-host";
 import { getTruApiClient, loadHostSdk } from "./sdk";
 
 /** A host subscription, in the shape both clients return. */
@@ -126,26 +126,17 @@ interface TruApiObservable<T> {
   }): { unsubscribe(): void };
 }
 
-type TruApiTopUpStatus =
-  | { tag: "Detecting" | "Claiming" | "NotClaimed"; value?: undefined }
-  | { tag: "Claimed"; value: { finalized: boolean } }
-  | { tag: "ClaimedPartially"; value: { actualClaimed: bigint } };
-
-/** The payment calls of a core ≥ 0.26 client, as far as the terminal uses them. */
-interface TruApiPayments {
-  balanceSubscribe(args: { request: { purse?: number } }): TruApiObservable<{ available: bigint }>;
-  topUp(request: {
-    amount: bigint;
-    source: { tag: "Coins"; value: { sr25519SecretKeys: `0x${string}`[] } };
-    id: `0x${string}`;
-  }): PromiseLike<unknown>;
-  topUpStatusSubscribe(args: { request: { id: `0x${string}` } }): TruApiObservable<TruApiTopUpStatus>;
-}
+/** The payment calls of the TrUAPI client, typed by `@parity/truapi`. */
+type TruApiPayments = TruApi["payment"];
+type TruApiTopUpStatus = Parameters<
+  NonNullable<Parameters<ReturnType<TruApiPayments["topUpStatusSubscribe"]>["subscribe"]>[0]>["next"] & {}
+>[0];
 
 /** The TrUAPI client's payment calls, or `null` when its core has none. */
 async function truApiPayments(): Promise<TruApiPayments | null> {
-  const client = (await getTruApiClient()) as { payment?: Partial<TruApiPayments> } | null;
-  const payment = client?.payment;
+  const payment = (await getTruApiClient())?.payment as Partial<TruApiPayments> | undefined;
+  // The client may be the host's own, built from an older core than this SDK:
+  // ask what it has rather than trusting the type.
   if (
     typeof payment?.topUp !== "function" ||
     typeof payment.topUpStatusSubscribe !== "function" ||
@@ -208,32 +199,20 @@ function toTopUpError(error: unknown): Error {
   }
 }
 
-/** The client answers with a neverthrow `Result`; read it without depending on the class. */
-function errorOf(result: unknown): { error: unknown } | null {
-  if (!result || typeof result !== "object") return null;
-  const r = result as { isErr?: () => boolean; error?: unknown };
-  if (typeof r.isErr === "function") return r.isErr() ? { error: r.error } : null;
-  return r.error !== undefined ? { error: r.error } : null;
-}
-
-function toTopUpStatus(item: unknown): TopUpStatusEvent | null {
-  let status = item as { tag?: unknown; value?: unknown } | null | undefined;
-  if (status?.tag === "V1") status = status.value as typeof status;
-  switch (status?.tag) {
+function toTopUpStatus(status: TruApiTopUpStatus): TopUpStatusEvent | null {
+  switch (status.tag) {
     case "Detecting":
       return { type: "detecting" };
     case "Claiming":
       return { type: "claiming" };
     case "Claimed":
-      return { type: "claimed", finalized: Boolean((status.value as { finalized?: unknown })?.finalized) };
+      return { type: "claimed", finalized: status.value.finalized };
     case "ClaimedPartially":
-      return {
-        type: "claimedPartially",
-        actualClaimed: BigInt((status.value as { actualClaimed?: bigint | string | number })?.actualClaimed ?? 0),
-      };
+      return { type: "claimedPartially", actualClaimed: status.value.actualClaimed };
     case "NotClaimed":
       return { type: "notClaimed" };
     default:
+      // A status this build does not know yet — a newer core's addition.
       return null;
   }
 }
@@ -372,14 +351,12 @@ export async function createClaimHost(
   return {
     topUp: (planck, keys, topUpId) =>
       trace(async () => {
-        const refused = errorOf(
-          await payment.topUp({
-            amount: planck,
-            source: { tag: "Coins", value: { sr25519SecretKeys: keys.map((k) => toHex(k)) } },
-            id: toHex(topUpId),
-          }),
-        );
-        if (refused) throw toTopUpError(refused.error);
+        const result = await payment.topUp({
+          amount: planck,
+          source: { tag: "Coins", value: { sr25519SecretKeys: keys.map((k) => toHex(k)) } },
+          id: toHex(topUpId),
+        });
+        if (result.isErr()) throw toTopUpError(result.error);
       }),
     subscribeTopUpStatus: (topUpId, onStatus) =>
       fromObservable(
