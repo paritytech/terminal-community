@@ -15,7 +15,7 @@
  */
 
 import { x25519 } from "@noble/curves/ed25519.js";
-import { deriveEntropy } from "@novasamatech/host-api-wrapper";
+import { deriveHostEntropy } from "@/lib/host/payments";
 
 /** X25519 private keys, public keys and agreement outputs are all 32 bytes. */
 export const X25519_KEY_BYTES = 32;
@@ -29,14 +29,12 @@ export interface EphemeralKeypair {
 
 async function freshEntropy(): Promise<Uint8Array> {
   const label = crypto.getRandomValues(new Uint8Array(X25519_KEY_BYTES));
-  try {
-    const result = await deriveEntropy(label);
-    if (result.isOk() && result.value.length >= X25519_KEY_BYTES) {
-      return result.value.slice(0, X25519_KEY_BYTES);
-    }
-  } catch {
-    // Host bridge unavailable (standalone/dev) — fall through to the CSPRNG
-    // label, which is itself 32 bytes of secure randomness.
+  // From the live client (lib/host/payments), which never throws. Null means
+  // the host could not provide it — standalone, dev, or a host without the
+  // slot — and the CSPRNG label, itself 32 bytes of secure randomness, stands.
+  const derived = await deriveHostEntropy(label);
+  if (derived && derived.length >= X25519_KEY_BYTES) {
+    return derived.slice(0, X25519_KEY_BYTES);
   }
   return label;
 }

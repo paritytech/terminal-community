@@ -9,7 +9,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createPaymentManager } from "@novasamatech/host-api-wrapper";
+import { subscribeHostBalance } from "@/lib/host/payments";
 
 import { detectHostEnvironment } from "@/lib/host";
 
@@ -42,10 +42,10 @@ export function useCoinBalance(): UseCoinBalance {
     let unsubscribe: (() => void) | null = null;
 
     const subscribeOnce = (): (() => void) => {
-      const manager = createPaymentManager();
-      const sub = manager.subscribeBalance((balance) => {
+      // The live client's balance, whichever codec it speaks (lib/host/payments).
+      const sub = subscribeHostBalance((available) => {
         if (cancelled) return;
-        setAvailablePlanck(balance.available);
+        setAvailablePlanck(available);
         setStatus("ready");
       });
       // The host can drop the subscription (e.g. a reconnect) — re-establish it,

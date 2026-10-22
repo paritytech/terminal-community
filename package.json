@@ -36,6 +36,7 @@
     "@novasamatech/host-api-wrapper": "^0.12.0",
     "@parity/product-sdk": "^0.19.1",
     "@parity/product-sdk-descriptors": "^0.11.0",
+    "@parity/product-sdk-host": "0.20.0",
     "@polkadot-api/descriptors": "file:.papi/descriptors",
     "@polkadot-api/substrate-bindings": "^0.20.1",
     "@polkadot-api/ws-provider": "^0.9.0",

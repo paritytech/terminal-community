@@ -30,7 +30,7 @@
 
 import { useEffect } from "react";
 
-import {
+import type {
   importAdminQrConfig,
   tryDecodeAdminQrFrame,
 } from "@/lib/config/admin-qr";
@@ -47,12 +47,27 @@ declare global {
 
 export function TestHook() {
   useEffect(() => {
-    window.__T3R_TEST__ = {
-      version: 1,
-      importAdminQrConfig,
-      tryDecodeAdminQrFrame,
-    };
+    let cancelled = false;
+
+    // Loaded here, not at module scope. This component is mounted from the
+    // root layout, so a static import would put the admin-QR decoder — and
+    // `@bcts/dcbor`, whose bundled `collections` shims extend the built-in
+    // `Object` and `Array` at import time — into every page's boot graph. In
+    // a realm with sealed intrinsics that throws while the module graph is
+    // still evaluating and the terminal never renders (see
+    // lib/config/admin-qr-binding.ts). Nothing needs these helpers before the
+    // first paint: they exist for e2e to call off `window`.
+    void import("@/lib/config/admin-qr").then((mod) => {
+      if (cancelled) return;
+      window.__T3R_TEST__ = {
+        version: 1,
+        importAdminQrConfig: mod.importAdminQrConfig,
+        tryDecodeAdminQrFrame: mod.tryDecodeAdminQrFrame,
+      };
+    });
+
     return () => {
+      cancelled = true;
       delete window.__T3R_TEST__;
     };
   }, []);

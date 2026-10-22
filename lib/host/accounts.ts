@@ -24,9 +24,7 @@ import { AccountId } from "polkadot-api"
 import type { PolkadotSigner } from "polkadot-api"
 import type { Account } from "@/lib/web3/types/web3"
 import { WalletProviderType } from "@/lib/web3/types/web3"
-import type { ProductAccount } from "@novasamatech/host-api-wrapper"
-import { getAccountsProvider } from "./connection"
-import { createProductAccountSigner } from "./product-signer"
+import { getAccountsPort } from "./connection"
 
 export interface HostAccount extends Account {
   polkadotSigner: PolkadotSigner
@@ -70,114 +68,69 @@ async function tryProductAccount(): Promise<HostAccount[] | null> {
   const identifier = getProductIdentifier()
   if (!identifier) return null
 
-  const provider = getAccountsProvider() as any
-  if (typeof provider.getProductAccount !== "function") {
-    console.log("[Host Accounts] getProductAccount not available on this SDK")
-    return null
-  }
+  const port = await getAccountsPort()
+  if (!port) return null
 
   try {
-    console.log(`[Host Accounts] Trying getProductAccount("${identifier}", 0)...`)
-    const result = await withTimeout(
-      Promise.resolve(provider.getProductAccount(identifier, 0)),
+    console.log(`[Host Accounts] getProductAccount("${identifier}", 0) over codec ${port.codec}...`)
+    const account = await withTimeout(
+      port.getProductAccount(identifier, 0),
       PRODUCT_ACCOUNT_TIMEOUT_MS,
-      "getProductAccount"
+      "getProductAccount",
     )
+    if (!account) return null
 
-    return result.match(
-      (account: { publicKey: Uint8Array }) => {
-        const address = accountIdCodec.dec(account.publicKey)
-        console.log(`[Host Accounts] Product account: ${address} (identifier=${identifier})`)
-        const productAccount: ProductAccount = {
-          dotNsIdentifier: identifier,
-          derivationIndex: 0,
-          publicKey: account.publicKey,
-        }
-        // `createTransaction` slot — host receives full extension bytes (extra +
-        // additionalSigned) from PAPI's tx-utils, forwards to the phone wallet.
-        // Phone reconstructs the extrinsic from its own runtime metadata for
-        // chain-known extensions (AsPgas → BANDERSNATCH membership proof,
-        // EthSetOrigin → EVM origin, etc) and signs the transaction.
-        // Requires Polkadot Desktop ≥ 0.3.10 and polkadot-app-android-v2.
-        // The wrapper's signer is wrapped so `signTx` sends a runtime-listed
-        // `txExtVersion` (see lib/host/tx-ext-version.ts).
-        return [{
-          name: `T3rminal merchant`,
-          address,
-          provider: WalletProviderType.HostAPI,
-          polkadotSigner: createProductAccountSigner(
-            productAccount,
-            provider.getProductAccountSigner(productAccount, "createTransaction"),
-          ),
-          publicKey: account.publicKey,
-        }] satisfies HostAccount[]
+    const address = accountIdCodec.dec(account.publicKey)
+    console.log(`[Host Accounts] Product account: ${address} (identifier=${identifier})`)
+    return [
+      {
+        name: `T3rminal merchant`,
+        address,
+        provider: WalletProviderType.HostAPI,
+        polkadotSigner: port.getProductAccountSigner(account),
+        publicKey: account.publicKey,
       },
-      (err: unknown) => {
-        console.warn("[Host Accounts] getProductAccount error:", JSON.stringify(err))
-        return null
-      },
-    )
+    ] satisfies HostAccount[]
   } catch (e: any) {
     console.warn("[Host Accounts] getProductAccount failed:", e?.message || e)
     return null
   }
 }
-
 /**
  * Try the 0.7.x path: accountsProvider.getLegacyAccounts()
  */
 async function tryLegacyAccounts(): Promise<HostAccount[] | null> {
-  // Cast to any — getLegacyAccounts only exists in product-sdk >=0.7.x.
-  // Runtime check below handles the case when running against 0.6.x.
-  const provider = getAccountsProvider() as any
-
-  if (typeof provider.getLegacyAccounts !== "function") {
-    console.log("[Host Accounts] getLegacyAccounts not available (SDK <0.7.x)")
-    return null
-  }
+  const port = await getAccountsPort()
+  if (!port) return null
 
   try {
-    console.log("[Host Accounts] Trying getLegacyAccounts (0.7.x)...")
-    const result = await withTimeout(
-      Promise.resolve(provider.getLegacyAccounts()),
-      5000,
-      "getLegacyAccounts"
-    )
-
-    return result.match(
-      (accounts: Array<{ publicKey: Uint8Array; name: string | undefined }>) => {
-        if (accounts.length === 0) {
-          console.log("[Host Accounts] getLegacyAccounts returned empty")
-          return [] as HostAccount[]
-        }
-        console.log(`[Host Accounts] Got ${accounts.length} legacy account(s)`)
-        return accounts.map((acc) => {
-          const address = accountIdCodec.dec(acc.publicKey)
-          console.log(`[Host Accounts] Account: ${acc.name || "unnamed"} ${address}`)
-          return {
-            name: acc.name || "Host Account",
-            address,
-            provider: WalletProviderType.HostAPI,
-            polkadotSigner: provider.getLegacyAccountSigner({
-              dotNsIdentifier: "",
-              derivationIndex: 0,
-              publicKey: acc.publicKey,
-            }),
-            publicKey: acc.publicKey,
-          }
-        })
-      },
-      (err: unknown) => {
-        console.warn("[Host Accounts] getLegacyAccounts error:", JSON.stringify(err))
-        return null
-      },
-    )
+    console.log("[Host Accounts] Trying getLegacyAccounts...")
+    const accounts = await withTimeout(port.getLegacyAccounts(), 5000, "getLegacyAccounts")
+    if (accounts.length === 0) {
+      console.log("[Host Accounts] getLegacyAccounts returned empty")
+      return [] as HostAccount[]
+    }
+    console.log(`[Host Accounts] Got ${accounts.length} legacy account(s)`)
+    return accounts.flatMap((acc) => {
+      const signer = port.getLegacyAccountSigner(acc)
+      if (!signer) return []
+      const address = accountIdCodec.dec(acc.publicKey)
+      console.log(`[Host Accounts] Account: ${acc.name || "unnamed"} ${address}`)
+      return [
+        {
+          name: acc.name || "Host Account",
+          address,
+          provider: WalletProviderType.HostAPI,
+          polkadotSigner: signer,
+          publicKey: acc.publicKey,
+        },
+      ]
+    })
   } catch (e: any) {
     console.warn("[Host Accounts] getLegacyAccounts failed:", e?.message || e)
     return null
   }
 }
-
 export async function getHostAccounts(): Promise<HostAccount[]> {
   // Product account is the only signing path that goes end-to-end on the
   // current host-api 0.8.x protocol (Polkadot Desktop ≥0.7.5 + Android v2).
@@ -192,16 +145,18 @@ export async function getHostAccounts(): Promise<HostAccount[]> {
 export function subscribeHostAccounts(
   onAccountsChanged: (accounts: HostAccount[]) => void
 ): () => void {
-  const provider = getAccountsProvider()
+  let stop = () => {}
+  let cancelled = false
 
-  const sub = provider.subscribeAccountConnectionStatus(async (status) => {
-    if (status === "connected") {
-      const accounts = await getHostAccounts()
-      onAccountsChanged(accounts)
-    } else {
-      onAccountsChanged([])
-    }
+  void getAccountsPort().then((port) => {
+    if (!port || cancelled) return
+    stop = port.subscribeConnectionStatus(async (isConnected) => {
+      onAccountsChanged(isConnected ? await getHostAccounts() : [])
+    })
   })
 
-  return () => sub.unsubscribe()
+  return () => {
+    cancelled = true
+    stop()
+  }
 }

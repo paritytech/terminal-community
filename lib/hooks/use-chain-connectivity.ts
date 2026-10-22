@@ -3,15 +3,36 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isChainReachable } from "@/lib/payments/chain-reachability";
 
+/**
+ * Why the settlement path is not usable. "unsupported" means the host answered
+ * and has no payments on this runtime, which needs a different message from
+ * "offline" (see lib/payments/host-reachability.ts).
+ */
+export type UnreachableReason = "offline" | "unsupported";
+
+/** What a probe may return: a plain answer, or the host payments verdict. */
+export type ProbeResult = boolean | "reachable" | UnreachableReason;
+
+function normalise(result: ProbeResult): UnreachableReason | null {
+  if (result === true || result === "reachable") return null;
+  if (result === false) return "offline";
+  return result;
+}
+
 export interface ChainConnectivity {
   /** Last known reachability of the settlement path (so we can actually settle a sale). */
   isOnline: boolean;
+  /** Why it is not reachable, when it is not. */
+  unreachableReason: UnreachableReason | null;
   /** A reachability probe is in flight. */
   isChecking: boolean;
   /** Epoch millis of the last completed check, or null before the first. */
   lastCheckedAt: number | null;
-  /** Run an immediate check (e.g. right before generating a sale QR). */
-  check: () => Promise<boolean>;
+  /**
+   * Run an immediate check (e.g. right before generating a sale QR). Resolves
+   * to null when reachable, otherwise to the reason.
+   */
+  check: () => Promise<UnreachableReason | null>;
 }
 
 export interface ChainConnectivityOptions {
@@ -23,7 +44,7 @@ export interface ChainConnectivityOptions {
    * method setting is still loading) — nothing is probed and the indicator
    * stays green rather than flashing "offline" against the wrong path.
    */
-  probe?: (() => Promise<boolean>) | null;
+  probe?: (() => Promise<ProbeResult>) | null;
 }
 
 /**
@@ -34,20 +55,22 @@ export interface ChainConnectivityOptions {
 export function useChainConnectivity(options: ChainConnectivityOptions = {}): ChainConnectivity {
   const { intervalMs = 15000, probe = isChainReachable } = options;
   const [isOnline, setIsOnline] = useState(true);
+  const [unreachableReason, setUnreachableReason] = useState<UnreachableReason | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const mounted = useRef(true);
 
-  const check = useCallback(async () => {
-    if (!probe) return true;
+  const check = useCallback(async (): Promise<UnreachableReason | null> => {
+    if (!probe) return null;
     setIsChecking(true);
-    const reachable = await probe();
+    const reason = normalise(await probe());
     if (mounted.current) {
-      setIsOnline(reachable);
+      setIsOnline(reason === null);
+      setUnreachableReason(reason);
       setLastCheckedAt(Date.now());
       setIsChecking(false);
     }
-    return reachable;
+    return reason;
   }, [probe]);
 
   useEffect(() => {
@@ -69,5 +92,5 @@ export function useChainConnectivity(options: ChainConnectivityOptions = {}): Ch
     };
   }, [check, intervalMs, probe]);
 
-  return { isOnline, isChecking, lastCheckedAt, check };
+  return { isOnline, unreachableReason, isChecking, lastCheckedAt, check };
 }

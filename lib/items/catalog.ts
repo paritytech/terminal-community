@@ -15,7 +15,7 @@
 
 import { readTable, writeTable, onStorageChange } from "@/lib/storage/host-storage"
 import type { QrItemConfig, T3rminalConfigQrPayloadV2 } from "@/lib/config/t3rminal-config-qr"
-import { loadAdminQrPayload } from "@/lib/config/admin-qr"
+import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding"
 import type { Catalog, CatalogItem, ItemCategory } from "./types"
 
 const SETTINGS_TABLE = "settings"

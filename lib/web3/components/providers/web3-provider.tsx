@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { useState, useEffect } from "react"
 import { useWeb3Store } from "@/lib/web3/store/use-web3-store"
-import { isInHost, isTruApiRuntime } from "@/lib/host/detect"
+import { awaitHostRuntime, isInHost } from "@/lib/host/detect"
 import { connectToHost } from "@/lib/host/connection"
 import { getHostAccounts, subscribeHostAccounts } from "@/lib/host/accounts"
 import type { HostConnectionState } from "@/lib/host/connection-status"
@@ -26,20 +26,6 @@ function HostAutoConnect() {
     const setHostConnection = (state: HostConnectionState) =>
       useWeb3Store.getState().setHostConnection(state)
 
-    // The TrUAPI runtime fakes the native container's globals, so check for
-    // it first — connecting would only burn the 60s product-account timeout.
-    if (isTruApiRuntime()) {
-      console.warn(
-        "[HostAutoConnect] TrUAPI product runtime detected (window.__truapi_localhost) — the host-api transport cannot connect here"
-      )
-      setHostConnection({ status: "failed", reason: "truapi-runtime" })
-      return
-    }
-
-    if (!isInHost()) {
-      setHostConnection({ status: "failed", reason: "not-in-host" })
-      return
-    }
     if (account?.provider === WalletProviderType.HostAPI) {
       setHostConnection({ status: "connected" })
       return
@@ -48,8 +34,21 @@ function HostAutoConnect() {
     let unsubscribe = () => {}
 
     const autoConnect = async () => {
-      console.log("[HostAutoConnect] Detected host environment, connecting…")
       setHostConnection({ status: "connecting" })
+
+      // Not `isInHost()` on its own: the host's bootstrap can land after the
+      // page's own scripts (Android registers it once the TrUAPI execution
+      // opens), so a launch that asked too early would call a real host a
+      // plain browser tab. Waiting for the runtime to identify itself settles
+      // both questions at once — and resolves immediately when either
+      // container is already there.
+      const runtime = await awaitHostRuntime()
+      if (!isInHost()) {
+        console.log("[HostAutoConnect] No host container — staying unauthenticated")
+        setHostConnection({ status: "failed", reason: "not-in-host" })
+        return
+      }
+      console.log(`[HostAutoConnect] Host detected, runtime: ${runtime} — connecting…`)
 
       try {
         const connected = await connectToHost()

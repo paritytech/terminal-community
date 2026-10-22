@@ -28,7 +28,7 @@ import { isHostPrinterAvailable, printHostDocument } from "@/lib/host/printing";
 import { buildCustomerReceiptPrintDocument } from "@/lib/receipts/thermal-print";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
-import { useAdminQrPayload } from "@/lib/config/admin-qr";
+import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { useTerminalIdentity } from "@/lib/config/terminal";
 
 /**
