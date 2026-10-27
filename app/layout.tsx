@@ -6,6 +6,7 @@ import { SentryTags } from "@/lib/components/sentry-tags";
 import { TestHook } from "@/lib/components/test-hook";
 import { HostThemeSync } from "@/lib/components/host-theme-sync";
 import { TopUpWatcherBoot } from "@/lib/components/topup-watcher-boot";
+import { PocketCardSync } from "@/lib/pocket/sync";
 import { fontVariablesClassName, THEME_INIT_SCRIPT } from "@/lib/fonts";
 import { HOST_RUNTIME_INIT_SCRIPT } from "@/lib/host/runtime-init";
 import "./globals.css";
@@ -60,6 +61,7 @@ export default function RootLayout({
           <TestHook />
           <HostThemeSync />
           <TopUpWatcherBoot />
+          <PocketCardSync />
           <ReportJobProvider>
             {children}
           </ReportJobProvider>

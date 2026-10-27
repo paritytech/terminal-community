@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAccount } from "@/lib/web3";
 import { journeyTracker } from "@/lib/telemetry";
 import { HostConnectionHint } from "@/components/host-connection-status";
+import { CARD_ID } from "@/lib/pocket/merchant-card";
 
 export default function Home() {
   const router = useRouter();
@@ -25,11 +26,16 @@ export default function Home() {
   // straight to Check out — the amount keypad is the first thing a merchant
   // sees, taking a payment is one tap away. `replace` keeps `/` out of history
   // so the back button doesn't bounce the merchant onto a dead landing page.
+  //
+  // Tapping the merchant Pocket card opens the product at `/?card=merchant`
+  // (lib/pocket/merchant-card.ts): that goes to the Sales screen the card
+  // sums up, rather than to the keypad.
   useEffect(() => {
     if (account) {
       journeyTracker.milestone("page-load", "account-resolved");
       journeyTracker.complete("page-load");
-      router.replace("/terminal");
+      const fromCard = new URLSearchParams(window.location.search).get("card") === CARD_ID;
+      router.replace(fromCard ? "/home/sales" : "/terminal");
     }
   }, [account, router]);
 

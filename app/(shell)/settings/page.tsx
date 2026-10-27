@@ -14,6 +14,7 @@ import {
   Store,
   UserRound,
 } from "lucide-react";
+import { PocketCardRow } from "@/components/pocket-card-row";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -118,6 +119,9 @@ export default function SettingsPage() {
                 </button>
               );
             })}
+
+            {/* The merchant Pocket card — TrUAPI runtime only; renders nothing elsewhere. */}
+            <PocketCardRow />
 
             {/* Appearance — a dropdown, per the design system (never a row of
                 every theme as buttons). "Follow Polkadot app" hands the choice

@@ -12,8 +12,15 @@
 // ⁠ icon.path ⁠ and ⁠ executables[].path ⁠ resolve relative to THIS file. ⁠ ./out ⁠
 // is Next's static-export directory and is exactly the build dir deploy.ts
 // uploads, so the app executable reuses that already-stored CID instead of
-// re-uploading the same bytes. This is a single SPA — no widget/worker build —
-// so ⁠ app ⁠ is the only executable.
+// re-uploading the same bytes.
+//
+// Two executables: the app, and the Pocket worker that draws the merchant card
+// (pocket/worker.ts, built into ./out-pocket by scripts/build-pocket-worker.mts
+// right after `next build`). A host asks the worker to draw only once
+// worker.<domain> lists the card; bulletin-deploy 0.23 and later write
+// pocket.cards into that record. `preview` is a path inside the worker's
+// folder, drawn on the add sheet before the worker has run — a host refuses a
+// URL there.
 //
 // NOTE: this file is excluded from the app's tsconfig, so it is never
 // type-checked by ⁠ next build ⁠. At publish time bulletin-deploy loads it via
@@ -36,6 +43,14 @@ export default defineConfig({
       kind: "app",
       path: "./out",
       appVersion: [0, 1, 0],
+    },
+    {
+      kind: "worker",
+      path: "./out-pocket",
+      appVersion: [0, 1, 0],
+      entrypoint: "worker.js",
+      includes: { chat: false, pocket: true },
+      pocket: { cards: [{ id: "merchant", title: "T3RMINAL", preview: "faces/merchant.json" }] },
     },
   ],
 });
