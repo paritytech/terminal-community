@@ -214,6 +214,27 @@ export async function findFirstByField<T>(table: string, field: keyof T, value: 
 }
 
 /**
+ * Read a single JSON value (not a table), or null when there is none.
+ */
+export async function readValue<T>(key: string): Promise<T | null> {
+  const storage = await getStorage()
+  try {
+    return ((await storage.readJSON(key)) as T | null) ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Write a single JSON value (not a table). Values other executables of this
+ * product read, such as the Pocket worker's snapshot (lib/pocket/sync.tsx).
+ */
+export async function writeValue(key: string, value: unknown): Promise<void> {
+  const storage = await getStorage()
+  await storage.writeJSON(key, value)
+}
+
+/**
  * Clear all records from a table
  */
 export async function clearTable(table: string): Promise<void> {
