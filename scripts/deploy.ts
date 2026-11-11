@@ -40,7 +40,13 @@ const CONTRACT_BLOB = resolve(APP_ROOT, "contracts/bytecode/T3rminalBulletinInde
 const CONTRACT_BUILD_INFO = resolve(APP_ROOT, "contracts/bytecode/build-info.json");
 const DEFAULT_DOMAIN = "t3rminal-app-88.dot";
 const GATEWAY_BASE = process.env.DOTNS_GATEWAY_BASE ?? "dot.li";
-const MIN_BULLETIN_DEPLOY_VERSION = "0.8.0";
+// Pinned, not @latest: releases after 0.24.1 drop parts of bulletin-deploy's
+// library API (environment catalog → Trinity stack descriptors), so an
+// unpinned fetch can break a deploy the day a release ships. An installed CLI
+// at or above this version is used as-is; anything older is replaced by an
+// npx fetch of exactly this version. Bump deliberately, together with
+// .github/workflows/deploy-frontend.yml.
+const BULLETIN_DEPLOY_VERSION = "0.24.1";
 // The deploy spends PAS twice — instantiating the contract and registering the
 // .dot — so we gate on a floor before starting. If the funded balance is under
 // this, the funding step re-prompts instead of letting a half-deploy fail.
@@ -107,27 +113,27 @@ function versionGte(current: string, minimum: string): boolean {
  * Decide how to run bulletin-deploy without making the operator install
  * anything by hand. If a recent-enough CLI is already on PATH we use it
  * directly (fast path); otherwise — missing or too old — we fall back to
- * `npx -y bulletin-deploy@latest`, which fetches it on demand. npx needs no
+ * `npx -y bulletin-deploy@<pinned>`, which fetches it on demand. npx needs no
  * global install and no sudo, and leaves nothing permanent on the machine.
  * Returns the argv prefix to spawn (e.g. ["bulletin-deploy"] or
- * ["npx", "-y", "bulletin-deploy@latest"]).
+ * ["npx", "-y", "bulletin-deploy@0.24.1"]).
  */
 function resolveBulletinDeployCommand(): string[] {
   const probe = spawnSync("bulletin-deploy", ["--version"], { encoding: "utf8" });
   if (!probe.error && probe.status === 0) {
     const version = `${probe.stdout ?? ""}${probe.stderr ?? ""}`.trim();
-    if (parseSemver(version) && versionGte(version, MIN_BULLETIN_DEPLOY_VERSION)) {
+    if (parseSemver(version) && versionGte(version, BULLETIN_DEPLOY_VERSION)) {
       ui.success(`bulletin-deploy ${version} (installed)`);
       return ["bulletin-deploy"];
     }
     ui.warn(
       `bulletin-deploy ${version || "(unknown version)"} is older than ` +
-        `${MIN_BULLETIN_DEPLOY_VERSION} — fetching latest via npx instead.`,
+        `${BULLETIN_DEPLOY_VERSION} — fetching ${BULLETIN_DEPLOY_VERSION} via npx instead.`,
     );
   } else {
-    ui.info("bulletin-deploy not found — fetching latest via npx (no global install).");
+    ui.info(`bulletin-deploy not found — fetching ${BULLETIN_DEPLOY_VERSION} via npx (no global install).`);
   }
-  return ["npx", "-y", "bulletin-deploy@latest"];
+  return ["npx", "-y", `bulletin-deploy@${BULLETIN_DEPLOY_VERSION}`];
 }
 
 async function resolveWallet(rl: Interface): Promise<string> {

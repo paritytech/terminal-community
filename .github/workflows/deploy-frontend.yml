@@ -110,7 +110,10 @@ jobs:
       - run: ipfs init
 
       - name: Install deploy tool
-        run: npm install -g bulletin-deploy@latest
+        # Pinned, not @latest, so a new bulletin-deploy release can't break the
+        # deploy the day it ships. Bump deliberately, together with
+        # BULLETIN_DEPLOY_VERSION in scripts/deploy.ts.
+        run: npm install -g bulletin-deploy@0.24.1
 
       - name: Deploy
         uses: nick-fields/retry@v3
@@ -147,24 +150,6 @@ jobs:
         env:
           MNEMONIC: ${{ secrets.DOTNS_MNEMONIC }}
           NODE_OPTIONS: '--max-old-space-size=8192'
-
-      - name: Point the dotNS resolver at the content resolver
-        # bulletin-deploy (≤ 0.15.2) writes the contenthash to the content
-        # resolver but leaves a freshly registered base name's registry
-        # resolver on the reverse resolver. The Polkadot Android app honours
-        # the registry pointer and finds no content ("not registered or has
-        # no content"); iOS and the web gateway read the content resolver
-        # directly. One setResolver per name fixes it; the script is a no-op
-        # once the pointer is right. Signed by the same owner as the deploy.
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DOMAIN="pr${{ github.event.pull_request.number }}-terminal.paseo"
-          else
-            DOMAIN="terminal.paseo"
-          fi
-          node scripts/dotns-set-resolver.mjs "$DOMAIN" --apply
-        env:
-          MNEMONIC: ${{ secrets.DOTNS_MNEMONIC }}
 
       - name: Comment on PR
         # Skip for fork PRs: `pull_request` from a fork runs with a read-only
