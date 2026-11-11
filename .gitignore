@@ -13,6 +13,8 @@ node_modules/
 # next.js
 /.next/
 /out/
+# Pocket worker archive (scripts/build-pocket-worker.mts)
+/out-pocket/
 
 # production
 /build
