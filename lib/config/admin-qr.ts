@@ -50,7 +50,7 @@ export function tryDecodeAdminQrFrame(raw: string): DecodedT3rminalConfigQr | nu
 
 /**
  * Create an accumulator suitable for streaming raw QR text frames from
- * `html5-qrcode`. Single-frame URs decode immediately; multipart URs
+ * the scanner. Single-frame URs decode immediately; multipart URs
  * accumulate until the fountain code completes.
  */
 export function createAdminQrScanAccumulator() {
