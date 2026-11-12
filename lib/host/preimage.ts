@@ -7,13 +7,13 @@
  * same pair; this module picks the one this launch is on and loads it lazily.
  */
 
-import { isTruApiRuntime } from "./detect";
+import { onTruApi } from "./detect";
 import { loadHostSdk } from "./sdk";
 import { deferredSubscription, type HostSub } from "./subscription";
 
 /** Submit `data` as a preimage. Resolves with the host's key (the Blake2b-256 hash). */
 export async function submitPreimage(data: Uint8Array): Promise<string> {
-  if (isTruApiRuntime()) {
+  if (await onTruApi()) {
     const manager = await (await loadHostSdk()).getPreimageManager();
     if (!manager) throw new Error("preimage submit unavailable: no host client");
     return manager.submit(data);
@@ -28,7 +28,7 @@ export async function submitPreimage(data: Uint8Array): Promise<string> {
  */
 export function lookupPreimage(key: `0x${string}`, onPreimage: (bytes: Uint8Array | null) => void): HostSub {
   return deferredSubscription(async () => {
-    if (isTruApiRuntime()) {
+    if (await onTruApi()) {
       const manager = await (await loadHostSdk()).getPreimageManager();
       if (!manager) throw new Error("preimage lookup unavailable: no host client");
       return manager.lookup(key, onPreimage);

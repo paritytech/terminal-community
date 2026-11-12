@@ -16,7 +16,7 @@
  *
  * Everything above this module asks for `getAccountsPort()` and gets the same
  * shape either way. Which client backs it is decided once per launch by
- * `isTruApiRuntime()`.
+ * `awaitHostRuntime()` (./detect.ts).
  *
  * **Both clients are imported lazily and only one ever loads.** Each claims
  * `window.__HOST_API_PORT__.onmessage` when its transport module evaluates —

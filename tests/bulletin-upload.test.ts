@@ -25,7 +25,7 @@ const sdk = vi.hoisted(() => ({ submit: vi.fn(), lookup: vi.fn() }));
 
 vi.mock("@/lib/host/detect", () => ({
   isInHost: () => host.inHost,
-  isTruApiRuntime: () => host.truapi,
+  onTruApi: async () => host.inHost && host.truapi,
 }));
 vi.mock("@/lib/host/allowances", () => ({
   claimDefaultAllowances: vi.fn().mockResolvedValue(undefined),

@@ -18,7 +18,7 @@
 
 "use client";
 
-import { isTruApiRuntime } from "./detect";
+import { onTruApi } from "./detect";
 import { loadHostSdk } from "./sdk";
 
 const REQUESTED = ["BulletinAllowance", "SmartContractAllowance(0)", "AutoSigning"] as const;
@@ -41,7 +41,7 @@ function logOutcomes(outcomes: ReadonlyArray<string | undefined>): void {
 async function doClaim(): Promise<void> {
   console.info("[allowances] requesting BulletinAllowance + SmartContractAllowance(0) + AutoSigning");
 
-  if (isTruApiRuntime()) {
+  if (await onTruApi()) {
     const result = await (await loadHostSdk()).requestResourceAllocation([
       { tag: "BulletinAllowance" },
       { tag: "SmartContractAllowance", value: { tag: "Index", value: 0 } },
@@ -94,7 +94,7 @@ export function ensurePreimageSubmitPermission(): Promise<void> {
 }
 
 async function requestPreimageSubmit(): Promise<boolean> {
-  if (isTruApiRuntime()) {
+  if (await onTruApi()) {
     const result = await (await loadHostSdk()).requestPermission({ tag: "PreimageSubmit" });
     if (!result.ok) {
       throw new Error(`Host rejected the PreimageSubmit permission request: ${result.error.message}`);

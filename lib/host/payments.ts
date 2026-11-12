@@ -30,7 +30,7 @@
 
 import type { HostPaymentTopUpStatusSubscribeItem, HostSubscription } from "@parity/product-sdk-host";
 import { TopUpRefusal, type ClaimHost, type TopUpRefusalKind, type TopUpStatusEvent } from "@/lib/payments/coinage/claim";
-import { isTruApiRuntime } from "./detect";
+import { onTruApi } from "./detect";
 import { loadHostSdk } from "./sdk";
 import { deferredSubscription, type HostSub } from "./subscription";
 
@@ -168,7 +168,7 @@ async function truApiPaymentManager() {
  * payment bridge (pre-0.26) answers its first payment call as unsupported.
  */
 export async function hostPaymentsAvailable(): Promise<boolean> {
-  if (!isTruApiRuntime()) return true;
+  if (!(await onTruApi())) return true;
   return (await (await loadHostSdk()).getPaymentManager()) !== null;
 }
 
@@ -211,7 +211,7 @@ function codec1TopUpRefusal(error: unknown): unknown {
 /** Follow the merchant's available coin balance (in planck). */
 export function subscribeHostBalance(onAvailable: (planck: bigint) => void): HostSub {
   return deferredSubscription(async () => {
-    if (isTruApiRuntime()) {
+    if (await onTruApi()) {
       const manager = await truApiPaymentManager();
       return fromSdkSubscription(() => manager.subscribeBalance((item) => onAvailable(BigInt(item.available))));
     }
@@ -228,7 +228,7 @@ export function subscribeHostStatements(
   onPage: (page: HostStatementsPage) => void,
 ): HostSub {
   return deferredSubscription(async () => {
-    if (isTruApiRuntime()) {
+    if (await onTruApi()) {
       const sdk = await loadHostSdk();
       const store = await sdk.getStatementStore();
       if (!store) throw new Error("statement store unavailable on the TrUAPI runtime");
@@ -262,7 +262,7 @@ export function subscribeHostStatements(
  */
 export async function deriveHostEntropy(label: Uint8Array): Promise<Uint8Array | null> {
   try {
-    if (isTruApiRuntime()) {
+    if (await onTruApi()) {
       const result = await (await loadHostSdk()).deriveEntropy(label);
       return result.ok ? result.value : null;
     }
@@ -284,7 +284,7 @@ export async function deriveHostEntropy(label: Uint8Array): Promise<Uint8Array |
 export async function createClaimHost(
   trace: <T>(call: () => Promise<T>) => Promise<T>,
 ): Promise<ClaimHost> {
-  if (!isTruApiRuntime()) {
+  if (!(await onTruApi())) {
     const { createPaymentManager } = await import("@novasamatech/host-api-wrapper");
     const manager = createPaymentManager();
     return {

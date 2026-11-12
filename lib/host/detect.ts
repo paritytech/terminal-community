@@ -1,13 +1,8 @@
 /**
  * Host environment detection.
  *
- * The check is deliberately local rather than delegated to
- * `@parity/product-sdk/host`: that package carries its own copy of
- * `@parity/truapi`, and a second copy of the transport is not inert — the
- * first thing either client does on a webview is claim
- * `window.__HOST_API_PORT__.onmessage`, so two copies silently take each
- * other's replies. Dropping the import keeps exactly one transport in the
- * bundle, the one ./sdk.ts chooses.
+ * The check is deliberately local: it must not load either host client, since
+ * its answer is what decides which one loads.
  *
  * The signals are the three every Polkadot host publishes, and the same three
  * the SDK tested: an iframe parent, the webview mark, or the injected port.
@@ -18,10 +13,6 @@
 
 type HostGlobals = {
   __HOST_WEBVIEW_MARK__?: boolean
-  /** Where lib/host/runtime-init.ts parks the mark on a TrUAPI launch. */
-  __T3R_HOST_WEBVIEW_MARK__?: boolean
-  /** What that script concluded: "truapi" | "native", or absent while it waits. */
-  __T3R_HOST_RUNTIME__?: "truapi" | "native"
   __HOST_API_PORT__?: unknown
   __truapi_localhost?: unknown
   /** Newer cores build the TrUAPI client in the page and hand it over here. */
@@ -30,9 +21,8 @@ type HostGlobals = {
   __container_callback__?: unknown
 }
 
-/** The webview mark, wherever the boot guard left it. */
 function webviewMark(win: HostGlobals): boolean {
-  return win.__HOST_WEBVIEW_MARK__ === true || win.__T3R_HOST_WEBVIEW_MARK__ === true
+  return win.__HOST_WEBVIEW_MARK__ === true
 }
 
 function hostGlobals(): HostGlobals | null {
@@ -63,13 +53,12 @@ export function isInHost(): boolean {
 }
 
 /**
- * True when the page was bootstrapped by the Polkadot app's TrUAPI (Rust)
- * product runtime. That bootstrap publishes the ws-bridge endpoint on
- * `window.__truapi_localhost` and mimics the native container's globals
- * (`__HOST_WEBVIEW_MARK__`, a WebSocket-backed `__HOST_API_PORT__`), so every
- * other detector says "in host" — but the core only speaks TrUAPI wire codec
- * 2, and the terminal's host-api 0.12 transport (codec 1) never gets a reply.
- * Checked before connecting so the merchant sees a reason instead of a spinner.
+ * True when the TrUAPI (Rust) product runtime has already identified itself.
+ * That bootstrap mimics the native container's globals
+ * (`__HOST_WEBVIEW_MARK__`, `__HOST_API_PORT__`), so every other detector says
+ * "in host" — only these two markers tell the runtimes apart. A synchronous
+ * sample: on Android the bootstrap can land after the page's own scripts, so
+ * code that picks a host client awaits `onTruApi()` instead.
  */
 export function isTruApiRuntime(): boolean {
   const win = hostGlobals()
@@ -99,6 +88,10 @@ export function isProductWebSocketBlocked(): boolean {
   }
 }
 
+export type HostRuntime = "truapi" | "native"
+
+let runtimePromise: Promise<HostRuntime> | null = null
+
 /**
  * Which runtime this launch is on, once that is actually known.
  *
@@ -113,22 +106,40 @@ export function isProductWebSocketBlocked(): boolean {
  * the moment either runtime identifies itself, and falls back to the native
  * container if neither does — that is the one that works on every host that
  * predates TrUAPI.
+ *
+ * Decided once and shared: every module that picks a host client asks this,
+ * so they all pick the same one.
  */
-export async function awaitHostRuntime(timeoutMs = 3000): Promise<"truapi" | "native"> {
+export function awaitHostRuntime(): Promise<HostRuntime> {
+  runtimePromise ??= detectHostRuntime(3000)
+  return runtimePromise
+}
+
+/** True when this launch is inside a host that speaks TrUAPI. */
+export async function onTruApi(): Promise<boolean> {
+  return isInHost() && (await awaitHostRuntime()) === "truapi"
+}
+
+/** For tests: forget the decided runtime. */
+export function resetHostRuntime(): void {
+  runtimePromise = null
+}
+
+async function detectHostRuntime(timeoutMs: number): Promise<HostRuntime> {
   const win = hostGlobals()
   if (!win) return "native"
 
-  const settled = (): "truapi" | "native" | null => {
+  const settled = (): HostRuntime | null => {
     if (win.__HOST_API_CLIENT__ != null || win.__truapi_localhost != null) return "truapi"
     if (typeof win.__container_callback__ === "function") return "native"
-    return win.__T3R_HOST_RUNTIME__ ?? null
+    return null
   }
 
   const now = settled()
   if (now) return now
 
   return new Promise((resolve) => {
-    const finish = (value: "truapi" | "native") => {
+    const finish = (value: HostRuntime) => {
       clearInterval(timer)
       clearTimeout(deadline)
       window.removeEventListener("truapi-native-ready", onReady)

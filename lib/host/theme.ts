@@ -21,20 +21,19 @@
 
 import type { ThemeMode } from "@novasamatech/host-api-wrapper"
 import type { ThemeChoice } from "@/theme/theme"
-import { isInHost, isTruApiRuntime } from "./detect"
+import { isInHost, onTruApi } from "./detect"
 
 export type HostTheme = ThemeMode
 
 /**
  * Both clients expose the same `{ name, variant }` theme and the same
- * subscribe shape, so only the import differs. It is loaded lazily and only
- * for the live codec — see lib/host/runtime-init.ts for why importing the
- * other one is not free.
+ * subscribe shape, so only the import differs. Each is loaded lazily, on the
+ * runtime that uses it.
  */
 async function subscribeThemeForActiveCodec(
   onTheme: (theme: HostTheme) => void,
 ): Promise<{ unsubscribe: () => void; onInterrupt?: (cb: () => void) => void }> {
-  if (isTruApiRuntime()) {
+  if (await onTruApi()) {
     const { loadHostSdk } = await import("./sdk")
     const provider = await (await loadHostSdk()).getThemeProvider()
     if (!provider) throw new Error("theme provider unavailable on the TrUAPI runtime")

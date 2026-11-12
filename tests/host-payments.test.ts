@@ -55,7 +55,7 @@ const codec1 = vi.hoisted(() => ({
   topUp: null as null | ((...args: unknown[]) => Promise<void>),
 }));
 
-vi.mock("@/lib/host/detect", () => ({ isTruApiRuntime: () => truapi.on }));
+vi.mock("@/lib/host/detect", () => ({ onTruApi: async () => truapi.on }));
 vi.mock("@novasamatech/host-api-wrapper", () => ({
   createPaymentManager: () => ({
     topUp: (...args: unknown[]) => codec1.topUp!(...args),

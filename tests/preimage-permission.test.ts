@@ -19,7 +19,7 @@ vi.mock("@novasamatech/host-api-wrapper", () => ({
   hostApi: {},
   requestPermission: requestPermissionMock,
 }));
-vi.mock("@/lib/host/detect", () => ({ isTruApiRuntime: () => runtime.truapi }));
+vi.mock("@/lib/host/detect", () => ({ onTruApi: async () => runtime.truapi }));
 vi.mock("@/lib/host/sdk", () => ({ loadHostSdk: async () => sdk }));
 
 type PermissionResult = {
