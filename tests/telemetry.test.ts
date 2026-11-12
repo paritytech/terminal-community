@@ -58,9 +58,13 @@ describe("isExpectedError", () => {
 
 describe("errors and warnings", () => {
   it("logs an error with its tags and extra", () => {
-    captureError(new TypeError("boom"), { component: "terminal" }, { saleId: "s1" });
-    expect(lastLine(error)).toBe("[error] TypeError: boom");
-    expect(error.mock.calls.at(-1)?.[1]).toEqual({ component: "terminal", saleId: "s1" });
+    const failure = new Error("storage: Unknown", { cause: { tag: "Unknown", value: { reason: "x" } } });
+    captureError(failure, { component: "terminal" }, { saleId: "s1" });
+    const [label, logged, fields] = error.mock.calls.at(-1)!;
+    expect(label).toBe("[error]");
+    // The error object itself, so the log keeps its stack.
+    expect(logged).toBe(failure);
+    expect(fields).toEqual({ component: "terminal", saleId: "s1", cause: { tag: "Unknown", value: { reason: "x" } } });
   });
 
   it("logs a warning and never throws", () => {

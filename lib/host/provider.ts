@@ -74,7 +74,11 @@ function unavailable(genesis: string): JsonRpcProvider {
   })
 }
 
-/** The provider for `genesis`: the host's when it serves the chain, else the fallback. */
+/**
+ * The provider for `genesis`: the host's when it serves the chain, else the
+ * fallback. Rejects when the host could not be asked (a timeout, a dropped
+ * link) — that is not an answer, and the caller tries again.
+ */
 async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<JsonRpcProvider> {
   // A plain browser tab (local dev) has no host to ask.
   if (!isInHost()) return wsFallback(wsUrl) ?? unavailable(genesis)
@@ -85,9 +89,7 @@ async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<J
       const provider = await sdk.getHostProvider(genesis)
       if (provider) return provider
     } catch (error) {
-      if (!(error instanceof sdk.ChainNotSupportedError)) {
-        console.warn(`[Host Provider] host chain provider for ${genesis} failed:`, error)
-      }
+      if (!(error instanceof sdk.ChainNotSupportedError)) throw error
     }
     console.warn(`[Host Provider] the host does not serve ${genesis} — using the direct fallback`)
     return wsFallback(wsUrl) ?? unavailable(genesis)
@@ -99,25 +101,42 @@ async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<J
   return createPapiProvider(genesis, wsFallback(wsUrl))
 }
 
+/**
+ * A synchronous provider that connects once the host has answered. The
+ * decision is kept once made; a failed attempt is not, and `onResult(null)`
+ * has `getSyncProvider` try again with its own backoff.
+ */
 function hostChainProvider(genesis: `0x${string}`, wsUrl: string): JsonRpcProvider {
   let resolved: Promise<JsonRpcProvider> | null = null
+  let failures = 0
   return getSyncProvider((onResult) => {
     let active = true
-    resolved ??= resolveProvider(genesis, wsUrl)
-    void resolved.then(
+    let retry: ReturnType<typeof setTimeout> | null = null
+    const attempt = (resolved ??= resolveProvider(genesis, wsUrl))
+    void attempt.then(
       (provider) => {
+        failures = 0
         if (active) onResult((onMessage) => provider(onMessage))
       },
       (error) => {
-        console.error(`[Host Provider] could not build a provider for ${genesis}:`, error)
-        if (active) onResult((onMessage) => unavailable(genesis)(onMessage))
+        if (resolved === attempt) resolved = null
+        // getSyncProvider retries a `null` result at once; pace it ourselves.
+        const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** failures++)
+        console.warn(`[Host Provider] could not reach the host for ${genesis}, retrying in ${delay}ms:`, error)
+        retry = setTimeout(() => {
+          if (active) onResult(null)
+        }, delay)
       },
     )
     return () => {
       active = false
+      if (retry) clearTimeout(retry)
     }
   })
 }
+
+const RETRY_BASE_MS = 500
+const RETRY_MAX_MS = 30_000
 
 let paseoIndividualityClient: PolkadotClient | null = null
 let paseoAssetHubClient: PolkadotClient | null = null

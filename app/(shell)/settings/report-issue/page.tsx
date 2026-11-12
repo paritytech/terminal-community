@@ -18,15 +18,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatLogsAsText } from "@/lib/debug/log-capture";
-import { saveTextFile } from "@/lib/utils/save-file";
+import { saveFileViaHost } from "@/lib/host/files";
 
 /**
  * Settings → Help us fix an issue: a user problem report. Description +
  * optional screenshots + optional technical details (the captured console
  * log, secrets redacted) go out through the device's share sheet, so the
  * merchant picks where the report is sent — the terminal itself sends nothing
- * over the network. Without file sharing the report is saved as a text file
- * instead. The logs icon in the header opens the raw log list (/settings/logs).
+ * over the network. Without a share sheet the report is written to the
+ * device's Downloads through the host's file bridge, and failing that the
+ * text is copied to the clipboard. The outcome screen says which happened.
+ * The logs icon in the header opens the raw log list (/settings/logs).
  */
 
 const MAX_DESCRIPTION = 1200;
@@ -39,6 +41,15 @@ interface Attachment {
 }
 
 type SendState = "form" | "sending" | "error" | "success";
+
+/** How the report left the terminal. */
+type Delivery = "shared" | "saved" | "copied";
+
+const DELIVERY_COPY: Record<Delivery, string> = {
+  shared: "Thanks! Once you've sent it, we'll look into it",
+  saved: "Report saved to Downloads. Send it to support so we can look into it",
+  copied: "Report copied. Paste it into a message to support — screenshots aren't included",
+};
 
 const REPORT_TITLE = "Terminal problem report";
 
@@ -59,6 +70,7 @@ export default function ReportIssuePage() {
   const [includeTechnical, setIncludeTechnical] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [sendState, setSendState] = useState<SendState>("form");
+  const [delivery, setDelivery] = useState<Delivery>("shared");
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -81,24 +93,42 @@ export default function ReportIssuePage() {
     });
   };
 
+  /** Hand the report to the first channel this device has. */
+  const deliver = async (): Promise<Delivery> => {
+    const logs = includeTechnical ? formatLogsAsText() : null;
+    const files = attachments.map(({ file }) => file);
+    if (logs) files.push(new File([logs], "console-logs.txt", { type: "text/plain" }));
+
+    // Probe with exactly what will be shared: `canShare({ files: [] })` is
+    // false even where sharing the text alone works.
+    const data: ShareData = files.length
+      ? { title: REPORT_TITLE, text: description, files }
+      : { title: REPORT_TITLE, text: description };
+    if (typeof navigator !== "undefined" && navigator.share && (navigator.canShare?.(data) ?? files.length === 0)) {
+      await navigator.share(data);
+      return "shared";
+    }
+
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const text = `${REPORT_TITLE}\n\n${description}\n${logs ? `\n${logs}` : ""}`;
+    if (await saveFileViaHost(`terminal-report-${stamp}.txt`, new Blob([text], { type: "text/plain" }))) {
+      for (const [i, { file }] of attachments.entries()) {
+        await saveFileViaHost(`terminal-report-${stamp}-${i + 1}-${file.name}`, file);
+      }
+      return "saved";
+    }
+
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return "copied";
+    }
+    throw new Error("no way to hand the report over on this device");
+  };
+
   const handleSend = async () => {
     setSendState("sending");
-    const logs = includeTechnical ? formatLogsAsText() : null;
     try {
-      const files = attachments.map(({ file }) => file);
-      if (logs) files.push(new File([logs], "console-logs.txt", { type: "text/plain" }));
-
-      if (typeof navigator !== "undefined" && navigator.share && navigator.canShare?.({ files })) {
-        await navigator.share({ title: REPORT_TITLE, text: description, files });
-      } else {
-        // No file sharing here: keep the description and the log in one file.
-        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-        await saveTextFile(
-          `terminal-report-${stamp}.txt`,
-          `${REPORT_TITLE}\n\n${description}\n${logs ? `\n${logs}` : ""}`,
-          "text/plain",
-        );
-      }
+      setDelivery(await deliver());
       setSendState("success");
     } catch (error) {
       // Dismissing the share sheet is not a failure — back to the form.
@@ -144,7 +174,7 @@ export default function ReportIssuePage() {
           <Check className="size-6" strokeWidth={3} aria-hidden />
         </div>
         <p className="text-heading-l text-fg-primary text-center mb-10">
-          Thanks! Once you&apos;ve sent it, we&apos;ll look into it
+          {DELIVERY_COPY[delivery]}
         </p>
         <div className="flex-1" />
         <Button onClick={() => router.push("/settings")} className={PRIMARY_PILL}>

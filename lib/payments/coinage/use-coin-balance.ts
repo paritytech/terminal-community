@@ -10,8 +10,12 @@
 
 import { useEffect, useState } from "react";
 import { subscribeHostBalance } from "@/lib/host/payments";
+import { isBalanceWithheld, isPaymentsUnsupported } from "@/lib/payments/host-reachability";
 
 import { detectHostEnvironment } from "@/lib/host";
+
+/** Pause before following the balance again after the host dropped it. */
+const RESUBSCRIBE_DELAY_MS = 2_000;
 
 export type CoinBalanceStatus =
   | "idle"
@@ -40,6 +44,7 @@ export function useCoinBalance(): UseCoinBalance {
 
     let cancelled = false;
     let unsubscribe: (() => void) | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
 
     const subscribeOnce = (): (() => void) => {
       // The live client's balance, whichever codec it speaks (lib/host/payments).
@@ -49,10 +54,18 @@ export function useCoinBalance(): UseCoinBalance {
         setStatus("ready");
       });
       // The host can drop the subscription (e.g. a reconnect) — re-establish it,
-      // otherwise the balance would silently freeze.
-      sub.onInterrupt?.(() => {
+      // otherwise the balance would silently freeze. A host that withholds the
+      // balance (no BalanceAccess) or has no payments answers the same way on
+      // every try, so that is final for this screen.
+      sub.onInterrupt?.((payload) => {
         if (cancelled) return;
-        unsubscribe = subscribeOnce();
+        if (isBalanceWithheld(payload) || isPaymentsUnsupported(payload)) {
+          setStatus("unavailable");
+          return;
+        }
+        retry = setTimeout(() => {
+          if (!cancelled) unsubscribe = subscribeOnce();
+        }, RESUBSCRIBE_DELAY_MS);
       });
       return () => sub.unsubscribe();
     };
@@ -69,6 +82,7 @@ export function useCoinBalance(): UseCoinBalance {
 
     return () => {
       cancelled = true;
+      if (retry) clearTimeout(retry);
       unsubscribe?.();
     };
   }, []);

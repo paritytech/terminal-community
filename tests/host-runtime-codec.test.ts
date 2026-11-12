@@ -83,6 +83,18 @@ describe("awaitHostRuntime", () => {
     expect(await decided).toBe("native");
   });
 
+  it("answers native at once inside an iframe, where no marker can arrive", async () => {
+    vi.useFakeTimers();
+    const frame: Win = { addEventListener: () => {}, removeEventListener: () => {} };
+    frame.top = {};
+    g.window = frame;
+    expect(isInHost()).toBe(true);
+    let decided: string | null = null;
+    void awaitHostRuntime().then((r) => (decided = r));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decided).toBe("native");
+  });
+
   it("is never TrUAPI outside a host", async () => {
     const tab: Win = {};
     tab.top = tab;

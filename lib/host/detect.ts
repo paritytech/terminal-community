@@ -137,6 +137,10 @@ async function detectHostRuntime(timeoutMs: number): Promise<HostRuntime> {
 
   const now = settled()
   if (now) return now
+  // In an iframe the parent cannot publish anything into this window, so no
+  // marker is coming: the frame host speaks codec 1 (Desktop, dot.li, the e2e
+  // test host). Waiting would only delay every host call by the timeout.
+  if (isIframe()) return "native"
 
   return new Promise((resolve) => {
     const finish = (value: HostRuntime) => {

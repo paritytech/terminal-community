@@ -1,5 +1,5 @@
 import { PaymentTopUpErr } from "@novasamatech/host-api";
-import { SubscriptionError } from "@parity/truapi";
+import { RequestTimeoutError, SubscriptionError } from "@parity/truapi";
 import { setTruApiClient } from "@parity/product-sdk-host/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,6 +75,7 @@ const {
   subscribeHostStatements,
 } = await import("@/lib/host/payments");
 const { claimCoins, deriveTopUpId, NotClaimedError, TopUpRefusal } = await import("@/lib/payments/coinage/claim");
+const { classifyTopupError } = await import("@/lib/payments/coinage/topup-error");
 const { runTopUpWatch } = await import("@/lib/payments/coinage/topup-watcher");
 const { isBalanceWithheld, isPaymentsUnsupported } = await import("@/lib/payments/host-reachability");
 
@@ -204,6 +205,19 @@ describe("the TrUAPI claim host", () => {
     const zero = await refusedWith(domain("InvalidAmount"));
     expect(zero).toMatchObject({ kind: "Unknown", reason: "InvalidAmount" });
     expect(await refusedWith({ tag: "Unsupported" })).toMatchObject({ kind: "Unknown", reason: "Unsupported" });
+  });
+
+  it("passes a host that never answered through as is, not as a refusal", async () => {
+    // A timeout is not a refusal: the host may have taken the top-up. The SDK
+    // rethrows it as HostTimeoutError with the client's error on `.cause`.
+    payment.topUp.mockReturnValueOnce({
+      match: () => Promise.reject(new RequestTimeoutError("7", 9, 1, 120_000)),
+    });
+    const host = await createClaimHost(passthrough);
+    const failure = await host.topUp(1n, [new Uint8Array([1])], deriveTopUpId("pay-t", 1)).catch((e: unknown) => e);
+    expect(failure).not.toBeInstanceOf(TopUpRefusal);
+    expect((failure as Error).name).toBe("HostTimeoutError");
+    expect(classifyTopupError(failure)).toBe("timeout");
   });
 
   it("ends a claim the host never took with NotClaimed", async () => {

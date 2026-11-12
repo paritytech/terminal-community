@@ -135,10 +135,10 @@ const PREIMAGE_LOOKUP_TIMEOUT_MS = 15_000
 /**
  * Resolve a preimage by key through the host, wrapping the callback-style
  * `lookup` subscription into a promise. Resolves `null` if the host produces no
- * preimage within `timeoutMs`; rejects if the host drops the lookup.
+ * preimage within `timeoutMs` or drops the lookup (the reason goes to the log).
  */
 function lookupPreimageOnce(key: `0x${string}`, timeoutMs: number): Promise<Uint8Array | null> {
-  return new Promise<Uint8Array | null>((resolve, reject) => {
+  return new Promise<Uint8Array | null>((resolve) => {
     let done = false
     const finish = (settle: () => void) => {
       if (done) return
@@ -150,9 +150,10 @@ function lookupPreimageOnce(key: `0x${string}`, timeoutMs: number): Promise<Uint
     const subscription = lookupPreimage(key, (preimage) => {
       if (preimage) finish(() => resolve(preimage))
     })
-    subscription.onInterrupt?.((reason) =>
-      finish(() => reject(reason instanceof Error ? reason : new Error(`host preimage lookup ended: ${String(reason)}`))),
-    )
+    subscription.onInterrupt?.((reason) => {
+      console.warn("[Bulletin] host preimage lookup ended:", reason)
+      finish(() => resolve(null))
+    })
     const timer = setTimeout(() => finish(() => resolve(null)), timeoutMs)
   })
 }

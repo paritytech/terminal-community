@@ -92,14 +92,24 @@ const REFUSAL_KINDS: ReadonlySet<string> = new Set<TopUpRefusalKind>([
   "InsufficientFunds",
 ]);
 
+/** True when `error` carries a typed answer from the host (a tagged CallError). */
+function isHostRefusal(error: unknown): boolean {
+  const answer = hostAnswer(error) as { tag?: unknown } | null | undefined;
+  return !!answer && typeof answer === "object" && !(answer instanceof Error) && typeof answer.tag === "string";
+}
+
 /**
- * A TrUAPI top-up refusal as claim.ts reads it. `InvalidAmount` has no kind of
- * its own and reads as `Unknown`, with the host's words kept for the log. A
- * `TypeError` means the host's client has no such call — a core from before
- * the payment bridge.
+ * A TrUAPI top-up failure as claim.ts reads it. A typed refusal becomes a
+ * `TopUpRefusal` (`InvalidAmount` has no kind of its own and reads as
+ * `Unknown`, with the host's words kept for the log). Anything else — a
+ * timeout, a dropped link, an undecodable reply — is not a refusal: the host
+ * may well have taken the top-up, so the original error goes through as is,
+ * exactly like the codec-1 path. A `TypeError` means the host's client has no
+ * such call — a core from before the payment bridge.
  */
-function truApiTopUpRefusal(error: unknown): Error {
+function truApiTopUpRefusal(error: unknown): unknown {
   if (error instanceof TypeError) return new PaymentsUnsupportedError();
+  if (!isHostRefusal(error)) return error;
   const { tag, reason } = describeRefusal(error);
   return REFUSAL_KINDS.has(tag) ? new TopUpRefusal(tag as TopUpRefusalKind) : new TopUpRefusal("Unknown", reason);
 }

@@ -16,9 +16,13 @@ export function breadcrumb(category: string, message: string, data?: Fields): vo
   console.info(...line(`breadcrumb:${category}`, message, data));
 }
 
-/** An unexpected failure. */
+/**
+ * An unexpected failure. The error object itself goes to the log, so its
+ * stack is kept; a host error's typed payload (`cause`) rides along.
+ */
 export function captureError(error: unknown, tags?: Fields, extra?: Fields): void {
-  console.error(...line("error", error instanceof Error ? `${error.name}: ${error.message}` : String(error), { ...tags, ...extra }));
+  const cause = error instanceof Error && error.cause !== undefined ? { cause: error.cause } : {};
+  console.error("[error]", error, { ...tags, ...extra, ...cause });
 }
 
 /** Transient, non-fatal friction: a retry, a reconnect, a timeout that recovered. */
