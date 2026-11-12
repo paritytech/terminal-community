@@ -5,10 +5,9 @@
  * Coins never touch the chain from the product: the host claims the
  * customer's cheque (`paymentTopUp`) and reports progress
  * (`subscribeTopUpStatus`). So the right liveness signal is the host's
- * payments bridge, not a direct chain read — the Polkadot phone app does not
- * expose the Paseo People chain to products (`chainSupported` → false) and
- * iOS blocks product-side WebSockets, so `isChainReachable()` there is
- * always "offline" while payments work fine.
+ * payments bridge, not a chain read — a host that does not serve the Paseo
+ * People chain to products (`chainSupported` → false) leaves
+ * `isChainReachable()` "offline" while payments work fine.
  *
  * The probe opens `paymentBalanceSubscribe` and resolves true on the first
  * balance update (hosts push the current balance on subscribe), false on an

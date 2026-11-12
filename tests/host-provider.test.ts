@@ -2,24 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * lib/host/provider.ts picks the chain provider per runtime. On TrUAPI it
- * takes the SDK's host provider, falls back to a direct WebSocket only when
- * the host says it does not serve the chain, and treats any other failure as
- * "ask again later" rather than a decision for the session.
+ * takes the SDK's host provider. A chain the host does not serve is
+ * unavailable — the terminal never connects anywhere itself — and any other
+ * failure means "ask again later", not a decision for the session.
  */
 
 const sdk = vi.hoisted(() => {
   class ChainNotSupportedError extends Error {}
   return { getHostProvider: vi.fn(), ChainNotSupportedError };
 });
-const ws = vi.hoisted(() => ({ getWsProvider: vi.fn() }));
 
 vi.mock("@/lib/host/detect", () => ({
   isInHost: () => true,
   awaitHostRuntime: async () => "truapi",
-  isProductWebSocketBlocked: () => false,
 }));
 vi.mock("@/lib/host/sdk", () => ({ loadHostSdk: async () => sdk }));
-vi.mock("@polkadot-api/ws-provider", () => ws);
 vi.mock("polkadot-api", () => ({
   // Connect straight away so the provider's resolution runs.
   createClient: (provider: (onMessage: (m: unknown) => void) => unknown) => ({
@@ -45,7 +42,6 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(console, "warn").mockImplementation(() => {});
   sdk.getHostProvider.mockReset();
-  ws.getWsProvider.mockReset();
   resetClients();
 });
 
@@ -63,16 +59,21 @@ describe("the TrUAPI chain provider", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(sdk.getHostProvider).toHaveBeenCalledWith(PASEO_ASSET_HUB_GENESIS);
     expect(host.provider).toHaveBeenCalledTimes(1);
-    expect(ws.getWsProvider).not.toHaveBeenCalled();
   });
 
-  it("goes direct only when the host says it does not serve the chain", async () => {
-    const direct = fakeProvider();
-    ws.getWsProvider.mockReturnValue(direct.provider);
+  it("reports a chain the host does not serve as unavailable, and opens nothing itself", async () => {
+    const WebSocketSpy = vi.fn();
+    vi.stubGlobal("WebSocket", WebSocketSpy);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     sdk.getHostProvider.mockRejectedValue(new sdk.ChainNotSupportedError("no"));
-    getPaseoAssetHubClient();
+    const client = getPaseoAssetHubClient() as unknown as { connection: { send(m: unknown): void } };
     await vi.advanceTimersByTimeAsync(10);
-    expect(direct.provider).toHaveBeenCalledTimes(1);
+    client.connection.send({ jsonrpc: "2.0", id: 1, method: "chainHead_v1_follow", params: [true] });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(errors).toHaveBeenCalledWith(expect.stringMatching(/not served by the host/));
+    expect(WebSocketSpy).not.toHaveBeenCalled();
+    expect(sdk.getHostProvider).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 
   it("asks the host again after a failure that is not an answer", async () => {
@@ -83,12 +84,10 @@ describe("the TrUAPI chain provider", () => {
     getPaseoAssetHubClient();
     await vi.advanceTimersByTimeAsync(10);
     expect(host.provider).not.toHaveBeenCalled();
-    expect(ws.getWsProvider).not.toHaveBeenCalled();
 
     // Paced retry, then the host answers.
     await vi.advanceTimersByTimeAsync(600);
     expect(sdk.getHostProvider).toHaveBeenCalledTimes(2);
     expect(host.provider).toHaveBeenCalledTimes(1);
-    expect(ws.getWsProvider).not.toHaveBeenCalled();
   });
 });

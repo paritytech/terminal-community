@@ -79,7 +79,6 @@ jobs:
           # point CI builds at the new contract without a code change.
           NEXT_PUBLIC_NETWORK: ${{ vars.NEXT_PUBLIC_NETWORK }}
           NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS: ${{ vars.NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS }}
-          NEXT_PUBLIC_ASSET_HUB_WS: ${{ vars.NEXT_PUBLIC_ASSET_HUB_WS }}
 
       # Kubo straight from its GitHub release. The download action fetched it
       # from dist.ipfs.tech with no timeout; when that host stopped answering

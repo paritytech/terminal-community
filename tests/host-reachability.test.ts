@@ -1,11 +1,10 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   isHostPaymentsReachable,
   isPaymentsUnsupported,
   probeHostPayments,
   type HostBalanceSubscription,
 } from "@/lib/payments/host-reachability";
-import { isProductWebSocketBlocked } from "@/lib/host/detect";
 
 function fakeHost(script: (onBalance: () => void, interrupt: (p: unknown) => void) => void) {
   const unsubscribe = vi.fn();
@@ -99,42 +98,5 @@ describe("probeHostPayments — why it failed", () => {
     expect(isPaymentsUnsupported({ tag: "Domain", value: { tag: "V1", value: { tag: "PermissionDenied" } } })).toBe(
       false,
     );
-  });
-});
-
-describe("isProductWebSocketBlocked", () => {
-  const g = globalThis as { window?: unknown; WebSocket?: unknown };
-  const originalWindow = g.window;
-  const originalWs = g.WebSocket;
-  afterEach(() => {
-    if (originalWindow === undefined) delete g.window;
-    else g.window = originalWindow;
-    if (originalWs === undefined) delete g.WebSocket;
-    else g.WebSocket = originalWs;
-  });
-
-  it("recognises the iOS container's blocking proxy", () => {
-    g.window = {};
-    g.WebSocket = class {
-      constructor() {
-        throw new TypeError("Network access is not allowed");
-      }
-    };
-    expect(isProductWebSocketBlocked()).toBe(true);
-  });
-
-  it("treats a real WebSocket (SyntaxError on an invalid URL) as available", () => {
-    g.window = {};
-    g.WebSocket = class {
-      constructor(url: string) {
-        if (!/^wss?:\/\/.+/.test(url)) throw new SyntaxError(`The URL '${url}' is invalid.`);
-      }
-    };
-    expect(isProductWebSocketBlocked()).toBe(false);
-  });
-
-  it("is false without a window", () => {
-    delete g.window;
-    expect(isProductWebSocketBlocked()).toBe(false);
   });
 });

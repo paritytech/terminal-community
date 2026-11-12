@@ -2,7 +2,6 @@ export {
   detectHostEnvironment,
   isInHost,
   onTruApi,
-  isProductWebSocketBlocked,
   type HostEnvironment,
 } from "./detect"
 export {

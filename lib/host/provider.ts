@@ -1,11 +1,12 @@
 /**
  * Host API PAPI providers
  *
- * Routes all chain RPC through the host for whichever client this launch is
+ * All chain RPC goes through the host, for whichever client this launch is
  * on — the TrUAPI SDK's `getHostProvider` (structured `chain.*` calls) or the
- * codec-1 wrapper's `createPapiProvider` — with a direct WebSocket fallback
- * only for chains the host does not serve. Each host client is loaded lazily,
- * on the runtime that uses it.
+ * codec-1 wrapper's `createPapiProvider`. The terminal never opens a
+ * connection of its own: a chain the host does not serve is unavailable, not
+ * reached some other way. Each host client is loaded lazily, on the runtime
+ * that uses it.
  *
  * The clients stay synchronous for their callers: `getSyncProvider` hands
  * PAPI a provider at once and connects it when the host has answered.
@@ -13,8 +14,7 @@
 
 import { createClient, type JsonRpcProvider, type PolkadotClient } from "polkadot-api"
 import { getSyncProvider } from "@polkadot-api/json-rpc-provider-proxy"
-import { getWsProvider } from "@polkadot-api/ws-provider"
-import { awaitHostRuntime, isInHost, isProductWebSocketBlocked } from "./detect"
+import { awaitHostRuntime, isInHost } from "./detect"
 import { loadHostSdk } from "./sdk"
 
 // Paseo Individuality (Next v2) — people-system parachain hosting pallet-coinage
@@ -22,12 +22,10 @@ import { loadHostSdk } from "./sdk"
 // on 2026-08; verified 2026-08-28 via `chain_getBlockHash(0)`). The hash MUST
 // match the host's chain list (Firebase `chains_v2` → "Paseo Next V2 People"):
 // the host gates chain access on `featureSupported(Chain, genesis)`, and a
-// stale hash makes the host answer "unsupported" — the WS fallback below is
-// blocked in some sandboxes, so every chain read then times out ("Offline").
-// The RPC endpoint itself survives a reset; only the genesis changes.
+// stale hash makes the host answer "unsupported", so every chain read then
+// times out ("Offline").
 export const PASEO_INDIVIDUALITY_GENESIS =
   "0x89a63b11fef2c0273fc72c0d864da0793a665dade5db153e0cab995348c5440f" as `0x${string}`
-export const PASEO_INDIVIDUALITY_WS = "wss://paseo-people-next-system-rpc.polkadot.io"
 
 // Paseo Asset Hub Next (v2) — Revive contracts (T3rminalBulletinIndex).
 // Same re-genesis caveat as above (verified 2026-08-28); must also match the
@@ -38,50 +36,33 @@ export const PASEO_INDIVIDUALITY_WS = "wss://paseo-people-next-system-rpc.polkad
 // (`npm run deploy:contract`) and update NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS.
 export const PASEO_ASSET_HUB_GENESIS =
   "0x23e730eb1c6fecae09c917439a5038cb6122d0d48980e8b9bbf0ff56f94a2ca6" as `0x${string}`
-// Overridable at build time so a deploy to a different chain (e.g. previewnet)
-// points the runtime app at the same chain its contract was deployed to.
-// scripts/deploy-bulletin-index.ts writes NEXT_PUBLIC_ASSET_HUB_WS into
-// .env.local; unset falls back to Paseo Asset Hub Next.
-export const PASEO_ASSET_HUB_WS =
-  process.env.NEXT_PUBLIC_ASSET_HUB_WS ?? "wss://paseo-asset-hub-next-rpc.polkadot.io"
 
 // Bulletin chain access goes through host preimages (lib/host/preimage.ts) —
 // the host's local signer is the only path that fits the multi-KB preimage
 // payload, so we don't keep a direct PAPI client here.
 
-/**
- * Direct-WS fallback for chains the host doesn't serve. Some sandboxes block
- * product-side WebSockets outright (the iOS native container's `new
- * WebSocket` throws), so there the fallback can only fail — none is used and
- * the chain is reported unavailable instead. Coins settlement never needs
- * these reads (see lib/payments/host-reachability.ts); the pUSD path does.
- */
-function wsFallback(url: string): JsonRpcProvider | undefined {
-  if (isProductWebSocketBlocked()) {
-    console.warn(`[Host Provider] product WebSockets are blocked by the host sandbox — no direct fallback for ${url}`)
-    return undefined
-  }
-  return getWsProvider(url)
-}
-
-/** A provider for a chain nobody can serve: requests are logged, never answered. */
+/** A provider for a chain the host does not serve: requests are logged, never answered. */
 function unavailable(genesis: string): JsonRpcProvider {
   return () => ({
     send() {
-      console.error(`[Host Provider] chain ${genesis} is not served by the host and has no fallback`)
+      console.error(`[Host Provider] chain ${genesis} is not served by the host`)
     },
     disconnect() {},
   })
 }
 
 /**
- * The provider for `genesis`: the host's when it serves the chain, else the
- * fallback. Rejects when the host could not be asked (a timeout, a dropped
- * link) — that is not an answer, and the caller tries again.
+ * The host's provider for `genesis`, or one that reports the chain
+ * unavailable when the host does not serve it. Rejects when the host could
+ * not be asked (a timeout, a dropped link) — that is not an answer, and the
+ * caller tries again.
  */
-async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<JsonRpcProvider> {
+async function resolveProvider(genesis: `0x${string}`): Promise<JsonRpcProvider> {
   // A plain browser tab (local dev) has no host to ask.
-  if (!isInHost()) return wsFallback(wsUrl) ?? unavailable(genesis)
+  if (!isInHost()) {
+    console.warn(`[Host Provider] not inside a host — chain ${genesis} is unavailable`)
+    return unavailable(genesis)
+  }
 
   if ((await awaitHostRuntime()) === "truapi") {
     const sdk = await loadHostSdk()
@@ -91,14 +72,13 @@ async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<J
     } catch (error) {
       if (!(error instanceof sdk.ChainNotSupportedError)) throw error
     }
-    console.warn(`[Host Provider] the host does not serve ${genesis} — using the direct fallback`)
-    return wsFallback(wsUrl) ?? unavailable(genesis)
+    console.warn(`[Host Provider] the host does not serve ${genesis}`)
+    return unavailable(genesis)
   }
 
-  // The codec-1 provider asks the host itself and falls through to the
-  // fallback when the chain is not served.
+  // The codec-1 provider asks the host itself, and logs a chain it does not serve.
   const { createPapiProvider } = await import("@novasamatech/host-api-wrapper")
-  return createPapiProvider(genesis, wsFallback(wsUrl))
+  return createPapiProvider(genesis)
 }
 
 /**
@@ -106,13 +86,13 @@ async function resolveProvider(genesis: `0x${string}`, wsUrl: string): Promise<J
  * decision is kept once made; a failed attempt is not, and `onResult(null)`
  * has `getSyncProvider` try again with its own backoff.
  */
-function hostChainProvider(genesis: `0x${string}`, wsUrl: string): JsonRpcProvider {
+function hostChainProvider(genesis: `0x${string}`): JsonRpcProvider {
   let resolved: Promise<JsonRpcProvider> | null = null
   let failures = 0
   return getSyncProvider((onResult) => {
     let active = true
     let retry: ReturnType<typeof setTimeout> | null = null
-    const attempt = (resolved ??= resolveProvider(genesis, wsUrl))
+    const attempt = (resolved ??= resolveProvider(genesis))
     void attempt.then(
       (provider) => {
         failures = 0
@@ -142,7 +122,7 @@ let paseoIndividualityClient: PolkadotClient | null = null
 let paseoAssetHubClient: PolkadotClient | null = null
 
 export function getPaseoIndividualityClient(): PolkadotClient {
-  paseoIndividualityClient ??= createClient(hostChainProvider(PASEO_INDIVIDUALITY_GENESIS, PASEO_INDIVIDUALITY_WS))
+  paseoIndividualityClient ??= createClient(hostChainProvider(PASEO_INDIVIDUALITY_GENESIS))
   return paseoIndividualityClient
 }
 
@@ -155,7 +135,7 @@ export async function getPaseoIndividualityClientAsync(): Promise<PolkadotClient
  * (see lib/host/accounts.ts), so chain RPC and signing share the host.
  */
 export function getPaseoAssetHubClient(): PolkadotClient {
-  paseoAssetHubClient ??= createClient(hostChainProvider(PASEO_ASSET_HUB_GENESIS, PASEO_ASSET_HUB_WS))
+  paseoAssetHubClient ??= createClient(hostChainProvider(PASEO_ASSET_HUB_GENESIS))
   return paseoAssetHubClient
 }
 
