@@ -32,11 +32,6 @@ function getHostFiles(): HostFiles | null {
   return typeof files?.save === "function" ? (files as HostFiles) : null;
 }
 
-/** True only when the host exposes the file-save bridge (binding present). */
-export function isHostFileSaveAvailable(): boolean {
-  return getHostFiles() !== null;
-}
-
 /** Standard-base64-encode bytes without overflowing the call stack on large files. */
 async function blobToBase64(blob: Blob): Promise<string> {
   const bytes = new Uint8Array(await blob.arrayBuffer());

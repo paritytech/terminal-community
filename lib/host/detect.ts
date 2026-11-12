@@ -99,11 +99,6 @@ export function isProductWebSocketBlocked(): boolean {
   }
 }
 
-/** Async variant, kept for call sites that await detection during boot. */
-export async function isInHostAsync(): Promise<boolean> {
-  return isInHost()
-}
-
 /**
  * Which runtime this launch is on, once that is actually known.
  *

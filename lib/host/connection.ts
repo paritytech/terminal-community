@@ -65,7 +65,6 @@ export interface HostAccountsPort {
 }
 
 let portPromise: Promise<HostAccountsPort | null> | null = null
-let connected = false
 
 /** Build the codec-2 port over `@parity/product-sdk-host`. */
 async function createTruApiPort(): Promise<HostAccountsPort | null> {
@@ -191,10 +190,7 @@ export function getAccountsPort(): Promise<HostAccountsPort | null> {
     const runtime = await awaitHostRuntime()
     console.log(`[Host] Runtime: ${runtime}`)
     const port = runtime === "truapi" ? await createTruApiPort() : await createLegacyPort()
-    if (port) {
-      connected = true
-      console.log(`[Host] Transport ready (codec ${port.codec})`)
-    }
+    if (port) console.log(`[Host] Transport ready (codec ${port.codec})`)
     return port
   })().catch((error) => {
     console.log(`[Host] Connection error: ${error?.message || error}`)
@@ -205,14 +201,4 @@ export function getAccountsPort(): Promise<HostAccountsPort | null> {
 
 export async function connectToHost(): Promise<boolean> {
   return (await getAccountsPort()) !== null
-}
-
-export function isHostConnected(): boolean {
-  return connected
-}
-
-/** For tests: forget the resolved port so the next call rebuilds it. */
-export function resetHostConnection(): void {
-  portPromise = null
-  connected = false
 }

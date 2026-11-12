@@ -37,11 +37,6 @@ function getHostNfc(): HostNfc | null {
   return typeof nfc?.present === "function" ? (nfc as HostNfc) : null;
 }
 
-/** True only when the host exposes the NFC bridge (binding present). */
-export function isNfcAvailable(): boolean {
-  return getHostNfc() !== null;
-}
-
 /**
  * Arm NFC with the payment deeplink. Fire-and-forget: no-ops when the host has
  * no NFC bridge, and rejects only if the host call itself fails — never block QR
