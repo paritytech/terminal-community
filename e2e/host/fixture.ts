@@ -6,7 +6,18 @@ import { createServer, type Server } from "node:http";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { build } from "esbuild";
-import type { HostConfig, HostEvent, Hex, TopUpAnswer, TopUpRecord, TopUpScript, TopUpStatusWire } from "./protocol";
+import type {
+  AccountGetMode,
+  BalanceMode,
+  HostConfig,
+  HostEvent,
+  Hex,
+  StorageMode,
+  TopUpAnswer,
+  TopUpRecord,
+  TopUpScript,
+  TopUpStatusWire,
+} from "./protocol";
 import { buildCheque, parseChequeDeeplink, randomCoins, type ChequeRequest } from "./payer";
 
 const PRODUCT_URL = process.env.E2E_PRODUCT_URL ?? "http://localhost:5199";
@@ -24,7 +35,7 @@ async function bundleHostPage(): Promise<string> {
 function hostHtml(bundle: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Terminal test host</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}html,body,iframe{width:100%;height:100%;border:0;overflow:hidden}</style></head>
-<body><iframe id="product-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allow="clipboard-read; clipboard-write"></iframe>
+<body><iframe id="product-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads" allow="clipboard-read; clipboard-write"></iframe>
 <script>${bundle.replace(/<\/script/gi, "<\\/script")}</script></body></html>`;
 }
 
@@ -88,21 +99,25 @@ export class T3Host {
   // theme / accounts / storage
   setTheme(t: "light" | "dark") { return this.call("setTheme", t); }
   setAccountConnected(c: boolean) { return this.call("setAccountConnected", c); }
-  setAccountGetMode(m: "ok" | "NotConnected" | "Rejected" | "hang") { return this.call("setAccountGetMode", m); }
+  setAccountGetMode(m: AccountGetMode) { return this.call("setAccountGetMode", m); }
   merchantPublicKey(index = 0) { return this.call<[string, number], Hex>("getProductAccount", new URL(PRODUCT_URL).host, index); }
   getStorage<T = unknown>(key: string) { return this.call<[string], T | undefined>("getStorage", key); }
   seedStorage(key: string, json: unknown) { return this.call("seedStorage", key, json); }
-  setStorageMode(m: "ok" | "Full" | "Unknown") { return this.call("setStorageMode", m); }
+  setStorageMode(m: StorageMode) { return this.call("setStorageMode", m); }
+  storageKeys() { return this.call<[], string[]>("storageKeys"); }
   setEntropyMode(m: "derive" | "error") { return this.call("setEntropyMode", m); }
   // payments
   setBalance(planck: bigint) { return this.call("setBalance", planck.toString()); }
-  setBalanceMode(m: "send" | "PermissionDenied" | "Unsupported" | "silent") { return this.call("setBalanceMode", m); }
+  setBalanceMode(m: BalanceMode) { return this.call("setBalanceMode", m); }
   queueTopUpAnswer(a: TopUpAnswer, times = 1) { return this.call("queueTopUpAnswer", a, times); }
   setTopUpScript(s: TopUpScript) { return this.call("setTopUpScript", s); }
   emitTopUpStatus(idHex: Hex, s: TopUpStatusWire) { return this.call("emitTopUpStatus", idHex, s); }
   interruptTopUpStatus(idHex: Hex, reason: "NotFound" | { Unknown: string }) { return this.call("interruptTopUpStatus", idHex, reason); }
   forgetTopUp(idHex: Hex) { return this.call("forgetTopUp", idHex); }
   getTopUps() { return this.call<[], TopUpRecord[]>("getTopUps"); }
+  /** Live status subscriptions the host holds for `idHex` (stale ones from reloads included). */
+  topUpSubscriberCount(idHex: Hex) { return this.call<[Hex], number>("topUpSubscriberCount", idHex); }
+  statementSubscriberCount(topicHex: Hex) { return this.call<[Hex], number>("statementSubscriberCount", topicHex); }
   waitForTopUp(opts?: { since?: number; timeout?: number }) {
     return this.waitForEvent((e): e is Extract<HostEvent, { type: "topUp" }> => e.type === "topUp", opts).then((e) => e.record);
   }
@@ -159,6 +174,10 @@ export class T3Host {
   }
   restartProduct(path?: string) { return this.call("restartProduct", path); }
   setPermission(tag: string, granted: boolean) { return this.call("setPermission", tag, granted); }
+  getPreimages() { return this.call<[], Array<{ key: Hex; size: number }>>("getPreimages"); }
+  /** The stored bytes for `key`, as 0x-hex, or null. */
+  getPreimage(key: Hex) { return this.call<[Hex], Hex | null>("getPreimage", key); }
+  seedPreimage(valueHex: Hex) { return this.call<[Hex], Hex>("seedPreimage", valueHex); }
   navigations() { return this.events.filter((e) => e.type === "navigate"); }
   permissions() { return this.events.filter((e) => e.type === "permission"); }
 }

@@ -28,7 +28,18 @@ import {
 } from "@novasamatech/host-api";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import { devRoot, getPublicKey, productSecret, sign } from "./keys";
-import type { HostConfig, HostEvent, Hex, TopUpAnswer, TopUpRecord, TopUpScript, TopUpStatusWire } from "./protocol";
+import type {
+  AccountGetMode,
+  BalanceMode,
+  HostConfig,
+  HostEvent,
+  Hex,
+  StorageMode,
+  TopUpAnswer,
+  TopUpRecord,
+  TopUpScript,
+  TopUpStatusWire,
+} from "./protocol";
 
 declare global {
   interface Window {
@@ -57,29 +68,35 @@ const topUps = new Map<Hex, TopUpRecord>();
 const permissionAnswers = new Map<string, boolean>(); // default: grant
 const devicePermissionAnswers = new Map<string, boolean>();
 let balance = BigInt(cfg.balance);
-let balanceMode: "send" | "PermissionDenied" | "Unsupported" | "silent" = "send";
+let balanceMode: BalanceMode = cfg.balanceMode ?? "send";
 let theme: CodecType<typeof Theme> = toTheme(cfg.theme);
 let accountConnected = true;
-let accountGetMode: "ok" | "NotConnected" | "Rejected" | "hang" = "ok";
-let storageMode: "ok" | "Full" | "Unknown" = "ok";
-let entropyMode: "derive" | "error" = "derive";
+let accountGetMode: AccountGetMode = cfg.accountGetMode ?? "ok";
+let storageMode: StorageMode = cfg.storageMode ?? "ok";
+let entropyMode: "derive" | "error" = cfg.entropyMode ?? "derive";
 const topUpAnswers: Array<{ answer: TopUpAnswer; times: number }> = [];
-let topUpScript: TopUpScript = [
+let topUpScript: TopUpScript = cfg.topUpScript ?? [
   { status: { tag: "Detecting" }, afterMs: 50 },
   { status: { tag: "Claiming" }, afterMs: 150 },
   { status: { tag: "Claimed", finalized: false }, afterMs: 150 },
   // finality is left to the spec: host.emitTopUpStatus(id, { tag: "Claimed", finalized: true })
 ];
+for (const [key, json] of Object.entries(cfg.storage ?? {})) {
+  storage.set(key, new TextEncoder().encode(JSON.stringify(json)));
+}
 
 // Live subscribers, tagged with the product document generation that opened
-// them. A product reload never sends `stop` for its old subscriptions, so on
-// iframe `load` we drop everything from older generations.
+// them. A product document that goes away never sends `stop` for its
+// subscriptions; restartProduct() bumps the generation and drops the old
+// ones. (The handshake cannot mark the boundary: the product posts its first
+// subscribe before its handshake request.) Reloads the product does on its
+// own leave stale subscribers behind; sending to them is harmless.
 let generation = 0;
 type Sub<T> = { gen: number; send: (v: T) => void; interrupt?: () => void };
 const themeSubs = new Set<Sub<CodecType<typeof Theme>>>();
 const balanceSubs = new Set<Sub<{ available: bigint }>>();
 const accountSubs = new Set<Sub<"connected" | "disconnected">>();
-const statementSubs = new Set<Sub<Stmt> & { matches: (s: Stmt) => boolean }>();
+const statementSubs = new Set<Sub<Stmt> & { matches: (s: Stmt) => boolean; topics: Hex[] }>();
 const topUpSubs = new Map<Hex, Set<Sub<Status> & { interruptWith: (e: unknown) => void }>>();
 const preimageSubs = new Map<Hex, Set<Sub<Uint8Array | null>>>();
 const storageSubs = new Map<string, Set<Sub<{ value: Uint8Array | undefined }>>>();
@@ -147,6 +164,7 @@ function wire(container: Container, productId: string): void {
     storageMode === "Unknown" ? err(new StorageErr.Unknown({ reason: "test: bridge unhealthy" })) : ok(storage.get(key)),
   );
   container.handleLocalStorageWrite(([key, value], { ok, err }) => {
+    if (storageMode !== "ok") emit({ type: "storageWriteRejected", key, mode: storageMode });
     if (storageMode === "Full") return err(new StorageErr.Full());
     if (storageMode === "Unknown") return err(new StorageErr.Unknown({ reason: "test: bridge unhealthy" }));
     storage.set(key, value);
@@ -185,9 +203,10 @@ function wire(container: Container, productId: string): void {
     emit({ type: "devicePermission", request, granted });
     return ok(granted);
   });
-  container.handleRequestResourceAllocation((resources, { ok }) =>
-    ok(resources.map(() => ({ tag: "Allocated" as const, value: undefined }))),
-  );
+  container.handleRequestResourceAllocation((resources, { ok }) => {
+    emit({ type: "resourceAllocation", resources: resources.map((r) => r.tag) });
+    return ok(resources.map(() => ({ tag: "Allocated" as const, value: undefined })));
+  });
   container.handleNavigateTo((url, { ok }) => {
     emit({ type: "navigate", url });
     return ok(undefined);
@@ -205,11 +224,16 @@ function wire(container: Container, productId: string): void {
     // replay what the store already holds — a cheque injected before the
     // terminal subscribed must still be seen (real store semantics)
     send({ statements: statements.filter(matches), isComplete: true });
-    return track(statementSubs, {
+    const off = track(statementSubs, {
       gen: generation,
       matches,
+      topics: want,
       send: (s) => send({ statements: [s], isComplete: true }),
     });
+    return () => {
+      off();
+      emit({ type: "statementUnsubscribe", topics: want });
+    };
   });
   container.handleStatementStoreSubmit((statement, { ok }) => {
     statements.push(statement);
@@ -229,6 +253,7 @@ function wire(container: Container, productId: string): void {
   });
   container.handlePreimageLookupSubscribe((key, send) => {
     const k = key.toLowerCase() as Hex;
+    emit({ type: "preimageLookup", key: k, found: preimages.has(k) });
     send(preimages.get(k) ?? null);
     const set = preimageSubs.get(k) ?? new Set();
     preimageSubs.set(k, set);
@@ -240,6 +265,8 @@ function wire(container: Container, productId: string): void {
     emit({ type: "balanceSubscribe" });
     if (balanceMode === "PermissionDenied") { interrupt(new PaymentBalanceErr.PermissionDenied()); return () => {}; }
     if (balanceMode === "Unsupported") { interrupt(new PaymentBalanceErr.Unknown({ reason: "Unsupported" })); return () => {}; }
+    // What host-container answers when the host registers no balance handler.
+    if (balanceMode === "NotImplemented") { interrupt(new PaymentBalanceErr.Unknown({ reason: "Not implemented" })); return () => {}; }
     if (balanceMode === "send") send({ available: balance });
     return track(balanceSubs, { gen: generation, send });
   });
@@ -277,6 +304,12 @@ function wire(container: Container, productId: string): void {
       : "accept";
     record.answer = result;
     emit({ type: "topUp", record });
+    // A forced AlreadyExists means "the host already has this registration":
+    // keep it, so the product's follow-up status subscribe finds it.
+    if (result === "AlreadyExists" && !topUps.has(idHex)) {
+      topUps.set(idHex, { ...record, answer: "accept" });
+      runScript(idHex);
+    }
     switch (result) {
       case "hang": return new Promise<never>(() => {});
       case "AlreadyExists": return err(new PaymentTopUpErr.AlreadyExists());
@@ -285,13 +318,7 @@ function wire(container: Container, productId: string): void {
       case "Unknown": return err(new PaymentTopUpErr.Unknown({ reason: (answer as { Unknown: string }).Unknown }));
     }
     topUps.set(idHex, record);
-    if (topUpScript !== "manual") {
-      let delay = 0;
-      for (const step of topUpScript) {
-        delay += step.afterMs;
-        setTimeout(() => emitTopUpStatus(idHex, step.status), delay);
-      }
-    }
+    runScript(idHex);
     return ok(undefined);
   });
 
@@ -317,6 +344,15 @@ function wire(container: Container, productId: string): void {
   });
 }
 
+function runScript(idHex: Hex): void {
+  if (topUpScript === "manual") return;
+  let delay = 0;
+  for (const step of topUpScript) {
+    delay += step.afterMs;
+    setTimeout(() => emitTopUpStatus(idHex, step.status), delay);
+  }
+}
+
 function emitTopUpStatus(idHex: Hex, status: TopUpStatusWire): void {
   const record = topUps.get(idHex);
   if (!record || record.terminal) return; // host sends nothing after terminal
@@ -338,7 +374,7 @@ function createControl(iframe: HTMLIFrameElement) {
       accountConnected = c;
       accountSubs.forEach((s) => s.send(c ? "connected" : "disconnected"));
     },
-    setAccountGetMode(m: typeof accountGetMode) { accountGetMode = m; },
+    setAccountGetMode(m: AccountGetMode) { accountGetMode = m; },
     getProductAccount(productId: string, index = 0): Hex {
       return hex(getPublicKey(productKey(productId, { tag: "Index", value: index })));
     },
@@ -350,7 +386,7 @@ function createControl(iframe: HTMLIFrameElement) {
     seedStorage(key: string, json: unknown) { storage.set(key, new TextEncoder().encode(JSON.stringify(json))); },
     clearStorage() { storage.clear(); },
     storageKeys(): string[] { return [...storage.keys()]; },
-    setStorageMode(m: typeof storageMode) { storageMode = m; },
+    setStorageMode(m: StorageMode) { storageMode = m; },
     setEntropyMode(m: typeof entropyMode) { entropyMode = m; },
     // statements
     injectStatement(topicsHex: Hex[], dataHex: Hex, signerHex?: Hex, signatureHex?: Hex) {
@@ -365,7 +401,7 @@ function createControl(iframe: HTMLIFrameElement) {
     clearStatements() { statements.length = 0; },
     // balance
     setBalance(planck: string) { balance = BigInt(planck); balanceSubs.forEach((s) => s.send({ available: balance })); },
-    setBalanceMode(m: typeof balanceMode) { balanceMode = m; },
+    setBalanceMode(m: BalanceMode) { balanceMode = m; },
     // top ups
     queueTopUpAnswer(answer: TopUpAnswer, times = 1) { topUpAnswers.push({ answer, times }); },
     setTopUpScript(script: TopUpScript) { topUpScript = script; },
@@ -379,13 +415,24 @@ function createControl(iframe: HTMLIFrameElement) {
     forgetTopUp(idHex: Hex) { topUps.delete(idHex); },
     getTopUps(): TopUpRecord[] { return [...topUps.values()]; },
     topUpSubscriberCount(idHex: Hex): number { return topUpSubs.get(idHex)?.size ?? 0; },
+    statementSubscriberCount(topicHex: Hex): number {
+      return [...statementSubs].filter((s) => s.topics.includes(topicHex)).length;
+    },
     // permissions, preimages
     setPermission(tag: string, granted: boolean) { permissionAnswers.set(tag, granted); },
     setDevicePermission(request: string, granted: boolean) { devicePermissionAnswers.set(request, granted); },
     getPreimages(): Array<{ key: Hex; size: number }> { return [...preimages].map(([key, v]) => ({ key, size: v.length })); },
+    getPreimage(key: Hex): Hex | null { const v = preimages.get(key.toLowerCase() as Hex); return v ? hex(v) : null; },
     seedPreimage(valueHex: Hex): Hex { const v = unhex(valueHex); const k = hex(blake2b256(v)); preimages.set(k, v); return k; },
     // product lifecycle — host state survives, like a real app restart
     restartProduct(path?: string) {
+      // Everything the old document subscribed to goes with it.
+      generation++;
+      const prune = <T extends { gen: number }>(set: Set<T>) => set.forEach((s) => s.gen < generation && set.delete(s));
+      [themeSubs, balanceSubs, accountSubs, statementSubs].forEach((s) => prune(s as Set<{ gen: number }>));
+      topUpSubs.forEach((s) => prune(s));
+      preimageSubs.forEach((s) => prune(s));
+      storageSubs.forEach((s) => prune(s));
       iframe.src = new URL(path ?? new URL(iframe.src).pathname, cfg.productUrl).href;
     },
   };
@@ -402,20 +449,11 @@ function boot(): void {
   const container = createContainer(provider, { productId });
   wire(container, productId);
 
-  // A new product document handshakes before its first call (the product
-  // transport awaits isReady() in request/subscribe), so the incoming
-  // handshake — not the iframe `load` event, which fires AFTER the new
-  // document's first subscriptions — marks the generation boundary. Old
-  // documents never send `stop`; forget their subscribers.
+  // Every product document handshakes; tell the specs a document loaded.
+  let loads = 0;
   container.onDebugMessage(({ direction, payload }) => {
     if (direction !== "incoming" || payload.tag !== "host_handshake_request") return;
-    generation++;
-    const prune = <T extends { gen: number }>(set: Set<T>) => set.forEach((s) => s.gen < generation && set.delete(s));
-    [themeSubs, balanceSubs, accountSubs, statementSubs].forEach((s) => prune(s as Set<{ gen: number }>));
-    topUpSubs.forEach((s) => prune(s));
-    preimageSubs.forEach((s) => prune(s));
-    storageSubs.forEach((s) => prune(s));
-    emit({ type: "productLoad", generation });
+    emit({ type: "productLoad", generation: ++loads });
   });
 
   window.__T3_HOST__ = createControl(iframe);

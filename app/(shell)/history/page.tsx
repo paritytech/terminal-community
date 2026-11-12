@@ -470,7 +470,7 @@ export default function HistoryPage() {
                         <h3 className="text-overline uppercase text-fg-secondary">
                           {groupLabel}
                         </h3>
-                        <span className="text-overline font-mono text-fg-secondary">
+                        <span data-testid="history-group-total" className="text-overline font-mono text-fg-secondary">
                           {groupTotal.toFixed(2)} {symbol}
                         </span>
                       </div>

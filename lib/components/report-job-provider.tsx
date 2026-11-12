@@ -122,7 +122,7 @@ export function ReportJobProvider({ children }: { children: React.ReactNode }) {
     <ReportJobContext.Provider value={value}>
       {children}
       {(activeJob || toast) && (
-        <div className="fixed inset-x-0 top-0 z-[80] flex justify-center px-4 pt-[env(safe-area-inset-top)] pointer-events-none">
+        <div data-testid="report-job-toast" className="fixed inset-x-0 top-0 z-[80] flex justify-center px-4 pt-[env(safe-area-inset-top)] pointer-events-none">
           {/* Toast: progress rides on the inverted surface (like a tooltip),
               outcomes on the theme-invariant status fills with static white
               text. Depth is shadow-2, not a border. */}

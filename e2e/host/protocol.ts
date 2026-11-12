@@ -11,8 +11,20 @@ export interface HostConfig {
   root: "Alice" | "Bob" | "Charlie" | "Dave" | "Eve" | "Ferdie";
   theme: "light" | "dark";
   balance: string; // planck
+  /** Applied before the product loads, so boot-time calls see them. */
+  balanceMode?: BalanceMode;
+  accountGetMode?: AccountGetMode;
+  entropyMode?: "derive" | "error";
+  storageMode?: StorageMode;
+  /** Host storage tables to seed before boot, e.g. `{ sales: [...] }`. */
+  storage?: Record<string, unknown>;
+  topUpScript?: TopUpScript;
   legacyAccounts: boolean;
 }
+
+export type BalanceMode = "send" | "PermissionDenied" | "Unsupported" | "NotImplemented" | "silent";
+export type AccountGetMode = "ok" | "NotConnected" | "Rejected" | "hang";
+export type StorageMode = "ok" | "Full" | "Unknown";
 
 export type TopUpStatusWire =
   | { tag: "Detecting" }
@@ -49,6 +61,10 @@ export type HostEvent =
   | { type: "accountGet"; productId: string; index: string; publicKey?: Hex }
   | { type: "storageWrite"; key: string }
   | { type: "statementSubscribe"; filter: "MatchAll" | "MatchAny"; topics: Hex[] }
+  | { type: "statementUnsubscribe"; topics: Hex[] }
+  | { type: "storageWriteRejected"; key: string; mode: StorageMode }
+  | { type: "resourceAllocation"; resources: string[] }
+  | { type: "preimageLookup"; key: Hex; found: boolean }
   | { type: "statementSubmit"; topics: Hex[] }
   | { type: "balanceSubscribe" }
   | { type: "topUp"; record: TopUpRecord }

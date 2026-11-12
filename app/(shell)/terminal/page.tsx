@@ -1721,7 +1721,7 @@ function TerminalPageInner() {
               /* The generated receipt SVG is the printed document: it paints
                  its own paper (a white rect) and ink, so it needs no surface
                  from the theme — only rounded corners to clip to. */
-              <div className="rounded-nested overflow-hidden">
+              <div data-testid="receipt-svg" className="rounded-nested overflow-hidden">
                 <div dangerouslySetInnerHTML={{ __html: svgReceipt }} />
               </div>
             ) : (
