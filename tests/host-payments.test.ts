@@ -65,9 +65,9 @@ vi.mock("@novasamatech/host-api-wrapper", () => ({
 }));
 vi.mock("@/lib/telemetry", () => ({ captureWarning: vi.fn() }));
 
+const { deferredSubscription } = await import("@/lib/host/subscription");
 const {
   createClaimHost,
-  deferredSubscription,
   deriveHostEntropy,
   hostPaymentsAvailable,
   PaymentsUnsupportedError,

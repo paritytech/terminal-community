@@ -11,12 +11,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { requestPermissionMock } = vi.hoisted(() => ({ requestPermissionMock: vi.fn() }));
+const runtime = vi.hoisted(() => ({ truapi: false }));
+const sdk = vi.hoisted(() => ({ requestPermission: vi.fn(), requestResourceAllocation: vi.fn() }));
 
 vi.mock("@novasamatech/host-api", () => ({ enumValue: vi.fn() }));
 vi.mock("@novasamatech/host-api-wrapper", () => ({
   hostApi: {},
   requestPermission: requestPermissionMock,
 }));
+vi.mock("@/lib/host/detect", () => ({ isTruApiRuntime: () => runtime.truapi }));
+vi.mock("@/lib/host/sdk", () => ({ loadHostSdk: async () => sdk }));
 
 type PermissionResult = {
   match: (
@@ -41,7 +45,10 @@ async function loadEnsure() {
 
 beforeEach(() => {
   vi.resetModules();
+  runtime.truapi = false;
   requestPermissionMock.mockReset();
+  sdk.requestPermission.mockReset();
+  sdk.requestResourceAllocation.mockReset();
 });
 
 describe("ensurePreimageSubmitPermission", () => {
@@ -81,5 +88,38 @@ describe("ensurePreimageSubmitPermission", () => {
     await ensure();
 
     expect(requestPermissionMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("on the TrUAPI runtime", () => {
+  beforeEach(() => {
+    runtime.truapi = true;
+  });
+
+  it("asks the SDK for PreimageSubmit and never loads the codec-1 client", async () => {
+    sdk.requestPermission.mockResolvedValue({ ok: true, value: true });
+    const ensure = await loadEnsure();
+    await expect(ensure()).resolves.toBeUndefined();
+    expect(sdk.requestPermission).toHaveBeenCalledWith({ tag: "PreimageSubmit" });
+    expect(requestPermissionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the host denies it or the call fails", async () => {
+    sdk.requestPermission.mockResolvedValueOnce({ ok: true, value: false });
+    await expect((await loadEnsure())()).rejects.toThrow(/did not grant/);
+    vi.resetModules();
+    sdk.requestPermission.mockResolvedValueOnce({ ok: false, error: new Error("boom") });
+    await expect((await loadEnsure())()).rejects.toThrow(/boom/);
+  });
+
+  it("claims the allowances through the SDK", async () => {
+    sdk.requestResourceAllocation.mockResolvedValue({ ok: true, value: ["Allocated", "Allocated", "NotAvailable"] });
+    const { claimDefaultAllowances } = await import("@/lib/host/allowances");
+    await claimDefaultAllowances();
+    expect(sdk.requestResourceAllocation).toHaveBeenCalledWith([
+      { tag: "BulletinAllowance" },
+      { tag: "SmartContractAllowance", value: { tag: "Index", value: 0 } },
+      { tag: "AutoSigning" },
+    ]);
   });
 });

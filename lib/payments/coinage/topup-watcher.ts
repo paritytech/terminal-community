@@ -28,7 +28,8 @@
 
 "use client";
 
-import { createClaimHost, deferredSubscription, PaymentsUnsupportedError } from "@/lib/host/payments";
+import { createClaimHost, PaymentsUnsupportedError } from "@/lib/host/payments";
+import { deferredSubscription } from "@/lib/host/subscription";
 import {
   getSalesAwaitingClaimFinality,
   markSaleFinalized,

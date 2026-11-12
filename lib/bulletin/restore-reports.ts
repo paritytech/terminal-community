@@ -14,7 +14,7 @@ import {
   getAllDatesViaRevive,
   getMetadataViaRevive,
 } from "@/lib/contracts/revive-bulletin-index";
-import { BULLETIN_ENDPOINTS } from "./upload";
+import { gatewayUrlForCid } from "./client";
 import { addDailyReport, getAllDailyReports } from "@/lib/storage/database";
 
 export interface RestoreResult {
@@ -47,7 +47,7 @@ export async function restoreReportsFromChain(
     await addDailyReport({
       date,
       cid: meta.cid,
-      gatewayUrl: `${BULLETIN_ENDPOINTS.paseo.gateway}${meta.cid}`,
+      gatewayUrl: gatewayUrlForCid(meta.cid),
       bulletinBlockHash: "restored-from-chain",
       entryCount: meta.entryCount,
       merchantAddress: "",

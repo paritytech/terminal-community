@@ -27,21 +27,29 @@
  *  `BulletInAllowance` above; without it the host silently drops the request
  *  and the call hangs forever.
  *
- * Reads go through the same host preimage path. Inside the container we call
- * `preimageManager.lookup(key)` — the host serves the bytes from its own
- * Bulletin node, so no public HTTPS gateway is involved. The lookup key is the
- * CID's Blake2b-256 multihash digest (see `cidToPreimageKey`), which is the
- * exact hash `submit` returned at upload time. Standalone (outside a host, e.g.
- * local dev) has no preimage API, so reads fall back to the multi-gateway race
- * in `lib/bulletin/upload.ts`. The gateway also backstops an in-host lookup
- * that returns null / times out.
+ * Reads go through the same host preimage path: `lookup(key)` — the host
+ * serves the bytes from its own Bulletin node. The lookup key is the CID's
+ * Blake2b-256 multihash digest (see `cidToPreimageKey`), which is the exact
+ * hash `submit` returned at upload time. There is no public-gateway fallback:
+ * everything the terminal reads or writes goes through the host. A report the
+ * host cannot serve (uploaded from another device, not yet propagated) is
+ * reported as unavailable rather than fetched over the open web.
+ *
+ * Both host clients are covered by lib/host/preimage.ts and
+ * lib/host/allowances.ts, so this module works on either runtime.
  */
 
 "use client"
 
 import { calculateCID, cidToPreimageKey } from "./cid"
-import { BULLETIN_ENDPOINTS, readJsonFromGateway } from "./upload"
 import { claimDefaultAllowances, ensurePreimageSubmitPermission } from "@/lib/host/allowances"
+import { lookupPreimage, submitPreimage } from "@/lib/host/preimage"
+
+/**
+ * Parity's Bulletin IPFS gateway. Only used to build the `gatewayUrl` stored
+ * with each report as metadata; the terminal never fetches from it.
+ */
+const BULLETIN_GATEWAY = "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs/"
 
 export interface BulletinUploadResult {
   cid: string
@@ -92,13 +100,12 @@ export async function uploadToBulletinChain(
   await ensurePreimageSubmitPermission()
 
   const cid = calculateCID(data)
-  const gatewayUrl = `${BULLETIN_ENDPOINTS.paseo.gateway}${cid}`
+  const gatewayUrl = gatewayUrlForCid(cid)
 
-  const { preimageManager } = await import("@novasamatech/host-api-wrapper")
   console.log("[Bulletin] Submitting preimage via host API, size:", data.length)
   let key: string
   try {
-    key = await withTimeout(preimageManager.submit(data), PREIMAGE_SUBMIT_TIMEOUT_MS, "host preimage submit")
+    key = await withTimeout(submitPreimage(data), PREIMAGE_SUBMIT_TIMEOUT_MS, "host preimage submit")
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/no allowance set for account/i.test(message)) {
@@ -123,69 +130,58 @@ export async function uploadToBulletinChain(
   }
 }
 
+const PREIMAGE_LOOKUP_TIMEOUT_MS = 15_000
+
 /**
- * Resolve a preimage by key through the host API, wrapping the callback-style
+ * Resolve a preimage by key through the host, wrapping the callback-style
  * `lookup` subscription into a promise. Resolves `null` if the host produces no
- * preimage within `timeoutMs` (caller falls back to the gateway).
+ * preimage within `timeoutMs`; rejects if the host drops the lookup.
  */
-async function lookupPreimage(
-  key: `0x${string}`,
-  timeoutMs = 15000,
-): Promise<Uint8Array | null> {
-  const { preimageManager } = await import("@novasamatech/host-api-wrapper")
-  return new Promise<Uint8Array | null>((resolve) => {
+function lookupPreimageOnce(key: `0x${string}`, timeoutMs: number): Promise<Uint8Array | null> {
+  return new Promise<Uint8Array | null>((resolve, reject) => {
     let done = false
-    const finish = (value: Uint8Array | null) => {
+    const finish = (settle: () => void) => {
       if (done) return
       done = true
+      clearTimeout(timer)
       subscription.unsubscribe()
-      resolve(value)
+      settle()
     }
-    const subscription = preimageManager.lookup(key, (preimage) => finish(preimage))
-    setTimeout(() => finish(null), timeoutMs)
+    const subscription = lookupPreimage(key, (preimage) => {
+      if (preimage) finish(() => resolve(preimage))
+    })
+    subscription.onInterrupt?.((reason) =>
+      finish(() => reject(reason instanceof Error ? reason : new Error(`host preimage lookup ended: ${String(reason)}`))),
+    )
+    const timer = setTimeout(() => finish(() => resolve(null)), timeoutMs)
   })
 }
 
 /**
- * Fetch JSON stored on Bulletin for a CID.
- *
- * In-host: resolve via `preimageManager.lookup` (the host serves preimages it
- * submitted itself). The host store can't serve a report uploaded on another
- * device/session, or one that hasn't propagated yet — in those cases (and
- * standalone) we fall back to the DEDICATED Parity gateway only. We never race
- * third-party web2 gateways, so the CID never leaks off the Polkadot trust
- * domain.
+ * Fetch JSON stored on Bulletin for a CID, through the host's preimage store.
+ * The host serves preimages it can reach from its own Bulletin node; one it
+ * cannot (uploaded on another device, not yet propagated) is an error here,
+ * not a reason to go to the open web.
  */
 export async function fetchJsonFromBulletin<T = unknown>(cid: string): Promise<T> {
   const { isInHost } = await import("@/lib/host/detect")
-
-  if (isInHost()) {
-    const key = cidToPreimageKey(cid)
-    console.log("[Bulletin] Looking up preimage via host API, key:", key)
-    try {
-      const bytes = await lookupPreimage(key)
-      if (bytes) {
-        return JSON.parse(new TextDecoder().decode(bytes)) as T
-      }
-      console.warn(
-        "[Bulletin] Host preimage lookup empty; falling back to the dedicated Bulletin gateway",
-      )
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.warn(
-        "[Bulletin] Host preimage lookup failed; falling back to the dedicated Bulletin gateway:",
-        message,
-      )
-    }
+  if (!isInHost()) {
+    throw new Error("Reading a report needs the Polkadot app: open the terminal inside it.")
   }
 
-  console.log("[Bulletin] Fetching from dedicated Bulletin gateway, CID:", cid)
-  return readJsonFromGateway<T>(cid)
+  const key = cidToPreimageKey(cid)
+  console.log("[Bulletin] Looking up preimage via host API, key:", key)
+  const bytes = await lookupPreimageOnce(key, PREIMAGE_LOOKUP_TIMEOUT_MS)
+  if (!bytes) {
+    throw new Error(
+      "The Polkadot app could not find this report. It may have been uploaded from another " +
+        "device or not have propagated yet — try again in a moment.",
+    )
+  }
+  return JSON.parse(new TextDecoder().decode(bytes)) as T
 }
 
-/**
- * Public IPFS gateway URL for a CID — used for share / "Open in IPFS" links.
- */
+/** The report's address on the Bulletin IPFS gateway — stored as metadata only. */
 export function gatewayUrlForCid(cid: string): string {
-  return `${BULLETIN_ENDPOINTS.paseo.gateway}${cid}`
+  return `${BULLETIN_GATEWAY}${cid}`
 }

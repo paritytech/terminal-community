@@ -12,13 +12,16 @@
  *
  * Single batched `requestResourceAllocation([...])` call; cached for the page
  * lifetime so the host modal only opens once. Already-granted outcomes are
- * idempotent on the host side too.
+ * idempotent on the host side too. Each host client is loaded only on the
+ * runtime that uses it.
  */
 
 "use client";
 
-import { hostApi, requestPermission } from "@novasamatech/host-api-wrapper";
-import { enumValue } from "@novasamatech/host-api";
+import { isTruApiRuntime } from "./detect";
+import { loadHostSdk } from "./sdk";
+
+const REQUESTED = ["BulletinAllowance", "SmartContractAllowance(0)", "AutoSigning"] as const;
 
 let cached: Promise<void> | null = null;
 
@@ -31,8 +34,28 @@ export function claimDefaultAllowances(): Promise<void> {
   return cached;
 }
 
+function logOutcomes(outcomes: ReadonlyArray<string | undefined>): void {
+  outcomes.forEach((outcome, i) => console.info(`[allowances] ${REQUESTED[i]}: ${outcome ?? "unknown"}`));
+}
+
 async function doClaim(): Promise<void> {
   console.info("[allowances] requesting BulletinAllowance + SmartContractAllowance(0) + AutoSigning");
+
+  if (isTruApiRuntime()) {
+    const result = await (await loadHostSdk()).requestResourceAllocation([
+      { tag: "BulletinAllowance" },
+      { tag: "SmartContractAllowance", value: { tag: "Index", value: 0 } },
+      { tag: "AutoSigning" },
+    ]);
+    if (result.ok) logOutcomes(result.value);
+    else console.warn("[allowances] requestResourceAllocation failed:", result.error);
+    return;
+  }
+
+  const [{ hostApi }, { enumValue }] = await Promise.all([
+    import("@novasamatech/host-api-wrapper"),
+    import("@novasamatech/host-api"),
+  ]);
   const result = await hostApi.requestResourceAllocation(
     enumValue("v1", [
       enumValue("BulletinAllowance", undefined),
@@ -44,8 +67,7 @@ async function doClaim(): Promise<void> {
   result.match(
     (response) => {
       const outcomes = ((response as { value?: unknown }).value as { tag?: string }[]) ?? [];
-      const order = ["BulletinAllowance", "SmartContractAllowance(0)", "AutoSigning"] as const;
-      outcomes.forEach((o, i) => console.info(`[allowances] ${order[i]}: ${o.tag ?? "unknown"}`));
+      logOutcomes(outcomes.map((o) => o.tag));
     },
     (err: unknown) => {
       console.warn("[allowances] requestResourceAllocation failed:", err);
@@ -71,9 +93,16 @@ export function ensurePreimageSubmitPermission(): Promise<void> {
   return permissionCached;
 }
 
-async function doRequestPreimagePermission(): Promise<void> {
-  console.info("[allowances] requesting PreimageSubmit remote permission");
-  const granted = await requestPermission({ tag: "PreimageSubmit", value: undefined }).match(
+async function requestPreimageSubmit(): Promise<boolean> {
+  if (isTruApiRuntime()) {
+    const result = await (await loadHostSdk()).requestPermission({ tag: "PreimageSubmit" });
+    if (!result.ok) {
+      throw new Error(`Host rejected the PreimageSubmit permission request: ${result.error.message}`);
+    }
+    return result.value;
+  }
+  const { requestPermission } = await import("@novasamatech/host-api-wrapper");
+  return requestPermission({ tag: "PreimageSubmit", value: undefined }).match(
     (ok) => ok,
     (err) => {
       throw new Error(
@@ -81,7 +110,11 @@ async function doRequestPreimagePermission(): Promise<void> {
       );
     },
   );
-  if (!granted) {
+}
+
+async function doRequestPreimagePermission(): Promise<void> {
+  console.info("[allowances] requesting PreimageSubmit remote permission");
+  if (!(await requestPreimageSubmit())) {
     throw new Error(
       "The host did not grant the PreimageSubmit permission. Approve the Bulletin write " +
         "permission in the Polkadot app, then retry the report upload.",
