@@ -28,7 +28,7 @@
 
 "use client";
 
-import { createClaimHost, deferredSubscription } from "@/lib/host/payments";
+import { createClaimHost, deferredSubscription, PaymentsUnsupportedError } from "@/lib/host/payments";
 import {
   getSalesAwaitingClaimFinality,
   markSaleFinalized,
@@ -166,6 +166,12 @@ export async function runTopUpWatch(
         // Leave the sale "confirming"; a later launch tries again.
         log(`${target.saleId}: host does not know this top-up — leaving it confirming`);
         captureWarning("coins claim watch: host does not know the top-up id", { saleId: target.saleId });
+        return "dropped";
+      }
+      if (payload instanceof PaymentsUnsupportedError || error instanceof PaymentsUnsupportedError) {
+        // A host without payments has no statuses to follow; re-subscribing
+        // cannot change that. A later launch on a host that has them tries again.
+        log(`${target.saleId}: host has no payments on this runtime — leaving it confirming`);
         return "dropped";
       }
       if (resubscribe >= maxResubscribes) {

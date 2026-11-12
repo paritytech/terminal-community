@@ -33,8 +33,6 @@
  * path awaits its own loader, and only the path in use ever evaluates.
  */
 
-import { isTruApiRuntime } from "./detect";
-
 type HostSdk = typeof import("@parity/product-sdk-host");
 
 let sdkPromise: Promise<HostSdk> | null = null;
@@ -46,24 +44,4 @@ let sdkPromise: Promise<HostSdk> | null = null;
 export function loadHostSdk(): Promise<HostSdk> {
   sdkPromise ??= import("@parity/product-sdk-host");
   return sdkPromise;
-}
-
-/** True when this launch should talk TrUAPI. */
-export function usesTruApiRuntime(): boolean {
-  return isTruApiRuntime();
-}
-
-/**
- * The client, or `null` outside a host container. The SDK builds (or adopts)
- * its client on first use and caches it, so this is cheap after the first
- * call.
- */
-export async function getTruApiClient() {
-  const sdk = await loadHostSdk();
-  return sdk.getTruApi();
-}
-
-/** For tests: drop the cached module handle. */
-export function resetHostSdkCache(): void {
-  sdkPromise = null;
 }

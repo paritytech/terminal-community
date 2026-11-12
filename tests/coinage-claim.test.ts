@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { PaymentTopUpErr } from "@novasamatech/host-api";
 import {
   ClaimCancelledError,
   NotClaimedError,
   NothingClaimedError,
   StatusInterruptedError,
   TOP_UP_ID_BYTES,
+  TopUpRefusal,
   awaitSettledTopUpStatus,
   claimCoins,
   deriveTopUpId,
@@ -134,14 +134,14 @@ describe("claimCoins (register once, follow until the sale settles)", () => {
   });
 
   it("follows an already-registered id when the host answers AlreadyExists", async () => {
-    const h = scriptedHost([new PaymentTopUpErr.AlreadyExists()], [[{ type: "claimed", finalized: false }]]);
+    const h = scriptedHost([new TopUpRefusal("AlreadyExists")], [[{ type: "claimed", finalized: false }]]);
     const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep });
     expect(outcome.kind).toBe("claimed");
     expect(h.subscribedIds).toEqual([hex(idFor(1))]);
   });
 
   it("follows the previous registration when a retry hits SourceBusy", async () => {
-    const h = scriptedHost([new PaymentTopUpErr.SourceBusy()], [[{ type: "claimed", finalized: false }]]);
+    const h = scriptedHost([new TopUpRefusal("SourceBusy")], [[{ type: "claimed", finalized: false }]]);
     const outcome = await claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 2, sleep: noSleep });
     expect(outcome.kind).toBe("claimed");
     expect(h.subscribedIds).toEqual([hex(idFor(1))]);
@@ -149,7 +149,7 @@ describe("claimCoins (register once, follow until the sale settles)", () => {
 
   it("re-registers the same id and re-subscribes when the host drops the status subscription", async () => {
     const h = scriptedHost(
-      [undefined, new PaymentTopUpErr.AlreadyExists()],
+      [undefined, new TopUpRefusal("AlreadyExists")],
       [[{ type: "detecting" }, { interrupt: { name: "PaymentTopUpStatusErr::Unknown" } }], [{ type: "claimed", finalized: false }]],
     );
     const drops: unknown[] = [];
@@ -178,7 +178,7 @@ describe("claimCoins (register once, follow until the sale settles)", () => {
   });
 
   it("does not retry InvalidSource and never subscribes", async () => {
-    const refusal = new PaymentTopUpErr.InvalidSource();
+    const refusal = new TopUpRefusal("InvalidSource");
     const h = scriptedHost([refusal], []);
     await expect(claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, sleep: noSleep })).rejects.toBe(refusal);
     expect(h.subscribeTopUpStatus).not.toHaveBeenCalled();
@@ -227,8 +227,8 @@ describe("status helpers", () => {
   });
 
   it("isRetryableTopUpError only rules out the host's typed refusal and our own cancellation", () => {
-    expect(isRetryableTopUpError(new PaymentTopUpErr.Unknown({ reason: "boom" }))).toBe(true);
-    expect(isRetryableTopUpError(new PaymentTopUpErr.InvalidSource())).toBe(false);
+    expect(isRetryableTopUpError(new TopUpRefusal("Unknown", "boom"))).toBe(true);
+    expect(isRetryableTopUpError(new TopUpRefusal("InvalidSource"))).toBe(false);
     expect(isRetryableTopUpError(new ClaimCancelledError())).toBe(false);
   });
 });

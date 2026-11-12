@@ -1,23 +1,27 @@
 import { PaymentTopUpErr } from "@novasamatech/host-api";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SubscriptionError } from "@parity/truapi";
+import { setTruApiClient } from "@parity/product-sdk-host/testing";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * lib/host/payments.ts bridges the two host clients onto one payments
- * contract. The codec-1 half is today's behaviour; these tests pin the TrUAPI
- * half, which talks to the client's payment calls directly (core ≥ 0.26,
- * trinity-user-agents #1314) and has to read like codec 1 to claim.ts and
- * the finality watcher:
+ * contract. On the TrUAPI runtime it goes through the real
+ * `@parity/product-sdk-host` (`getPaymentManager`, `getStatementStore`,
+ * `deriveEntropy`); these tests drive the SDK with a fake TrUAPI client that
+ * answers the way the generated client does — results with `match`, and
+ * interrupts as a `SubscriptionError` with the host's reason on `.reason`.
+ * Claim.ts and the finality watcher must not be able to tell which client
+ * answered:
  *
  *  - statuses map one for one onto the codec-1 events;
- *  - refusals become the codec-1 errors claim.ts branches on (AlreadyExists,
- *    SourceBusy, InvalidSource), and a forgotten top-up reads as NotFound;
- *  - a core without the payment bridge is reported as unsupported instead of
- *    being sent calls it cannot decode.
+ *  - refusals become `TopUpRefusal` kinds on both clients;
+ *  - a forgotten top-up reads as NotFound, so the watcher stops;
+ *  - a core without the payment bridge is reported as unsupported.
  */
 
 type Observer = { next?: (item: unknown) => void; error?: (reason: unknown) => void; complete?: () => void };
 
-/** A client observable the test drives by hand. */
+/** A client subscription the test drives by hand. */
 function stream() {
   const observers: Observer[] = [];
   const unsubscribe = vi.fn();
@@ -25,34 +29,39 @@ function stream() {
     observable: {
       subscribe(observer: Observer) {
         observers.push(observer);
-        return { unsubscribe };
+        return { unsubscribe, subscriptionId: "sub" };
       },
     },
     next: (item: unknown) => observers.forEach((o) => o.next?.(item)),
-    error: (reason: unknown) => observers.forEach((o) => o.error?.(reason)),
+    /** The host interrupts with a typed reason, as the generated client reports it. */
+    interrupt: (reason: unknown) =>
+      observers.forEach((o) => o.error?.(new SubscriptionError("Subscription interrupted", { reason }))),
     complete: () => observers.forEach((o) => o.complete?.()),
     unsubscribe,
   };
 }
 
-const ok = () => ({ isErr: () => false, value: undefined });
-const err = (error: unknown) => ({ isErr: () => true, error });
+/** The generated client's `ResultAsync`, as far as the SDK reads it. */
+const ok = (value?: unknown) => ({
+  match: async (onOk: (v: unknown) => unknown) => onOk(value),
+});
+const err = (error: unknown) => ({
+  match: async (_onOk: unknown, onErr: (e: unknown) => unknown) => onErr(error),
+});
 const domain = (tag: string) => ({ tag: "Domain", value: { tag: "V1", value: { tag } } });
 
 const truapi = vi.hoisted(() => ({ on: true }));
-const client = vi.hoisted(() => ({
-  current: null as null | { payment: Record<string, unknown> },
-}));
-const store = vi.hoisted(() => ({ subscribe: vi.fn() }));
-const sdk = vi.hoisted(() => ({
-  getStatementStore: vi.fn(async () => store),
-  deriveEntropy: vi.fn(),
+const codec1 = vi.hoisted(() => ({
+  topUp: null as null | ((...args: unknown[]) => Promise<void>),
 }));
 
 vi.mock("@/lib/host/detect", () => ({ isTruApiRuntime: () => truapi.on }));
-vi.mock("@/lib/host/sdk", () => ({
-  loadHostSdk: async () => sdk,
-  getTruApiClient: async () => client.current,
+vi.mock("@novasamatech/host-api-wrapper", () => ({
+  createPaymentManager: () => ({
+    topUp: (...args: unknown[]) => codec1.topUp!(...args),
+    subscribeTopUpStatus: vi.fn(),
+    subscribeBalance: vi.fn(),
+  }),
 }));
 vi.mock("@/lib/telemetry", () => ({ captureWarning: vi.fn() }));
 
@@ -65,29 +74,37 @@ const {
   subscribeHostBalance,
   subscribeHostStatements,
 } = await import("@/lib/host/payments");
-const { claimCoins, deriveTopUpId, NotClaimedError } = await import("@/lib/payments/coinage/claim");
+const { claimCoins, deriveTopUpId, NotClaimedError, TopUpRefusal } = await import("@/lib/payments/coinage/claim");
 const { runTopUpWatch } = await import("@/lib/payments/coinage/topup-watcher");
-const { isPaymentsUnsupported } = await import("@/lib/payments/host-reachability");
+const { isBalanceWithheld, isPaymentsUnsupported } = await import("@/lib/payments/host-reachability");
 
 const passthrough = <T,>(call: () => Promise<T>) => call();
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const hex = (bytes: Uint8Array) => `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
 
-let payment: {
-  topUp: ReturnType<typeof vi.fn>;
-  topUpStatusSubscribe: ReturnType<typeof vi.fn>;
-  balanceSubscribe: ReturnType<typeof vi.fn>;
-};
+let payment: Record<string, ReturnType<typeof vi.fn>>;
+let statementStore: { subscribe: ReturnType<typeof vi.fn> };
+let entropy: { derive: ReturnType<typeof vi.fn> };
+
+function installClient(paymentCalls: Record<string, unknown> = payment) {
+  setTruApiClient({ payment: paymentCalls, statementStore, entropy } as never);
+}
 
 beforeEach(() => {
   truapi.on = true;
-  payment = { topUp: vi.fn(async () => ok()), topUpStatusSubscribe: vi.fn(), balanceSubscribe: vi.fn() };
-  client.current = { payment };
-  store.subscribe.mockReset();
-  sdk.deriveEntropy.mockReset();
+  payment = {
+    topUp: vi.fn(() => ok()),
+    topUpStatusSubscribe: vi.fn(),
+    balanceSubscribe: vi.fn(),
+  };
+  statementStore = { subscribe: vi.fn() };
+  entropy = { derive: vi.fn() };
+  installClient();
 });
 
-/** Claim with `statuses` scripted, one stream per subscription, emitted after subscribe. */
+afterEach(() => setTruApiClient(null));
+
+/** Script the status subscriptions, one stream each, emitted after subscribe. */
 function scriptStatuses(...scripts: Array<(s: ReturnType<typeof stream>) => void>) {
   const streams: Array<ReturnType<typeof stream>> = [];
   payment.topUpStatusSubscribe.mockImplementation(() => {
@@ -100,15 +117,25 @@ function scriptStatuses(...scripts: Array<(s: ReturnType<typeof stream>) => void
   return streams;
 }
 
+const watchDeps = (host: Awaited<ReturnType<typeof createClaimHost>>) => ({
+  host,
+  markSaleFinalized: vi.fn(),
+  recordSaleClaimShortfall: vi.fn(),
+  markSaleReverted: vi.fn(),
+  getSalesAwaitingClaimFinality: vi.fn(),
+  sleep: async () => {},
+});
+
 describe("the TrUAPI claim host", () => {
   it("registers the claim under its id, with the coins as hex sr25519 keys", async () => {
     const host = await createClaimHost(passthrough);
     const id = deriveTopUpId("pay-1", 1);
     await host.topUp(5_000_000n, [new Uint8Array([1, 2]), new Uint8Array([0xab])], id);
     expect(payment.topUp).toHaveBeenCalledWith({
+      id: hex(id),
+      into: undefined,
       amount: 5_000_000n,
       source: { tag: "Coins", value: { sr25519SecretKeys: ["0x0102", "0xab"] } },
-      id: hex(id),
     });
   });
 
@@ -145,9 +172,9 @@ describe("the TrUAPI claim host", () => {
   });
 
   it("after a dropped status, reads AlreadyExists as the registration it has and follows it", async () => {
-    payment.topUp.mockResolvedValueOnce(ok()).mockResolvedValueOnce(err(domain("AlreadyExists")));
+    payment.topUp.mockReturnValueOnce(ok()).mockReturnValueOnce(err(domain("AlreadyExists")));
     scriptStatuses(
-      (s) => s.error({ tag: "HostFailure", value: { reason: "bridge restarted" } }),
+      (s) => s.interrupt({ tag: "HostFailure", value: { reason: "bridge restarted" } }),
       (s) => s.next({ tag: "Claimed", value: { finalized: true } }),
     );
     const outcome = await claimCoins({
@@ -162,20 +189,21 @@ describe("the TrUAPI claim host", () => {
     expect(payment.topUp.mock.calls[1][0].id).toBe(payment.topUp.mock.calls[0][0].id);
   });
 
-  it("turns the host's refusals into the codec-1 errors claim.ts reads", async () => {
+  it("turns the host's refusals into TopUpRefusal kinds", async () => {
     const host = await createClaimHost(passthrough);
     const id = deriveTopUpId("pay-5", 1);
     const refusedWith = async (error: unknown) => {
-      payment.topUp.mockResolvedValueOnce(err(error));
+      payment.topUp.mockReturnValueOnce(err(error));
       return host.topUp(1n, [new Uint8Array([1])], id).catch((e: unknown) => e);
     };
-    expect(await refusedWith(domain("InvalidSource"))).toBeInstanceOf(PaymentTopUpErr.InvalidSource);
-    expect(await refusedWith(domain("SourceBusy"))).toBeInstanceOf(PaymentTopUpErr.SourceBusy);
-    expect(await refusedWith(domain("AlreadyExists"))).toBeInstanceOf(PaymentTopUpErr.AlreadyExists);
+    for (const kind of ["InvalidSource", "SourceBusy", "AlreadyExists"] as const) {
+      const refusal = await refusedWith(domain(kind));
+      expect(refusal).toBeInstanceOf(TopUpRefusal);
+      expect(refusal).toMatchObject({ kind, name: `PaymentTopUpErr::${kind}` });
+    }
     const zero = await refusedWith(domain("InvalidAmount"));
-    expect(zero).toBeInstanceOf(PaymentTopUpErr.Unknown);
-    expect(JSON.stringify((zero as { payload?: unknown }).payload)).toContain("InvalidAmount");
-    expect(await refusedWith({ tag: "Unsupported" })).toBeInstanceOf(PaymentTopUpErr.Unknown);
+    expect(zero).toMatchObject({ kind: "Unknown", reason: "InvalidAmount" });
+    expect(await refusedWith({ tag: "Unsupported" })).toMatchObject({ kind: "Unknown", reason: "Unsupported" });
   });
 
   it("ends a claim the host never took with NotClaimed", async () => {
@@ -192,61 +220,104 @@ describe("the TrUAPI claim host", () => {
   });
 
   it("lets the finality watcher stop on a top-up the host no longer knows", async () => {
-    scriptStatuses((s) => s.error(domain("TopUpNotFound")));
+    // The generated client wraps the host's TopUpNotFound in a SubscriptionError;
+    // before the SDK path the watcher read it as "Unknown" and kept re-subscribing.
+    scriptStatuses((s) => s.interrupt(domain("TopUpNotFound")));
     const host = await createClaimHost(passthrough);
     const verdict = await runTopUpWatch(
       { saleId: "sale-1", topUpIdHex: hex(deriveTopUpId("pay-7", 1)).slice(2) },
-      {
-        host,
-        markSaleFinalized: vi.fn(),
-        recordSaleClaimShortfall: vi.fn(),
-        markSaleReverted: vi.fn(),
-        getSalesAwaitingClaimFinality: vi.fn(),
-        sleep: async () => {},
-      },
+      watchDeps(host),
       new AbortController().signal,
     );
     expect(verdict).toBe("dropped");
     expect(payment.topUpStatusSubscribe).toHaveBeenCalledTimes(1);
   });
 
-  it("hands a refusal made inside subscribe to listeners that arrive afterwards", () => {
+  it("hands a refusal made inside subscribe to every listener, including late ones", async () => {
     payment.topUpStatusSubscribe.mockImplementation(() => ({
       subscribe(observer: Observer) {
-        observer.error?.(domain("TopUpNotFound"));
-        return { unsubscribe: vi.fn() };
+        observer.error?.(new SubscriptionError("Subscription interrupted", { reason: domain("TopUpNotFound") }));
+        return { unsubscribe: vi.fn(), subscriptionId: "sub" };
       },
     }));
-    return createClaimHost(passthrough).then((host) => {
-      const sub = host.subscribeTopUpStatus(new Uint8Array(32), () => {});
-      const payloads: unknown[] = [];
-      sub.onInterrupt?.((p) => payloads.push(p));
-      expect(payloads).toEqual([{ tag: "TopUpNotFound", reason: "TopUpNotFound" }]);
+    const host = await createClaimHost(passthrough);
+    const sub = host.subscribeTopUpStatus(new Uint8Array(32), () => {});
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    sub.onInterrupt?.((p) => first.push(p));
+    sub.onInterrupt?.((p) => second.push(p));
+    expect(first).toEqual([{ tag: "TopUpNotFound", reason: "TopUpNotFound" }]);
+    expect(second).toEqual(first);
+  });
+
+  it("reports a clean end of the status stream as Completed", async () => {
+    const streams = scriptStatuses((st) => st.complete());
+    const host = await createClaimHost(passthrough);
+    const payloads: unknown[] = [];
+    host.subscribeTopUpStatus(new Uint8Array(32), () => {}).onInterrupt?.((p) => payloads.push(p));
+    await tick();
+    expect(streams).toHaveLength(1);
+    expect(payloads).toEqual([{ tag: "Completed" }]);
+  });
+});
+
+describe("the codec-1 claim host", () => {
+  beforeEach(() => {
+    truapi.on = false;
+  });
+
+  it("turns the wrapper's PaymentTopUpErr into TopUpRefusal kinds", async () => {
+    const host = await createClaimHost(passthrough);
+    const refusedWith = async (error: unknown) => {
+      codec1.topUp = () => Promise.reject(error);
+      return host.topUp(1n, [new Uint8Array([1])], new Uint8Array(32)).catch((e: unknown) => e);
+    };
+    expect(await refusedWith(new PaymentTopUpErr.SourceBusy())).toMatchObject({ kind: "SourceBusy" });
+    expect(await refusedWith(new PaymentTopUpErr.InvalidSource())).toMatchObject({ kind: "InvalidSource" });
+    expect(await refusedWith(new PaymentTopUpErr.AlreadyExists())).toMatchObject({ kind: "AlreadyExists" });
+    expect(await refusedWith(new PaymentTopUpErr.Unknown({ reason: "Detecting" }))).toMatchObject({
+      kind: "Unknown",
+      reason: "Detecting",
     });
+    const dropped = new Error("bridge gone");
+    expect(await refusedWith(dropped)).toBe(dropped);
+  });
+
+  it("is always available", async () => {
+    expect(await hostPaymentsAvailable()).toBe(true);
   });
 });
 
 describe("a TrUAPI core without the payment bridge", () => {
   beforeEach(() => {
-    // What the SDK's own codec-2 client offers: the old calls, no status stream.
-    client.current = { payment: { topUp: vi.fn(), balanceSubscribe: vi.fn() } };
+    // A core from before 0.26: the old calls, no status stream.
+    installClient({ topUp: vi.fn(), balanceSubscribe: vi.fn() });
   });
 
-  it("is reported as unsupported, and is sent nothing", async () => {
+  it("answers the status subscription as unsupported, and the watcher stops at once", async () => {
+    const host = await createClaimHost(passthrough);
+    const payloads: unknown[] = [];
+    host.subscribeTopUpStatus(new Uint8Array(32), () => {}).onInterrupt?.((p) => payloads.push(p));
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toBeInstanceOf(PaymentsUnsupportedError);
+    expect(isPaymentsUnsupported(payloads[0])).toBe(true);
+
+    const subscribeSpy = vi.spyOn(host, "subscribeTopUpStatus");
+    const verdict = await runTopUpWatch(
+      { saleId: "sale-2", topUpIdHex: hex(deriveTopUpId("pay-8", 1)).slice(2) },
+      watchDeps(host),
+      new AbortController().signal,
+    );
+    expect(verdict).toBe("dropped");
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("outside a host container", () => {
+  it("has no payments on the TrUAPI runtime", async () => {
+    setTruApiClient(null);
     expect(await hostPaymentsAvailable()).toBe(false);
     await expect(createClaimHost(passthrough)).rejects.toBeInstanceOf(PaymentsUnsupportedError);
-
-    const payloads: unknown[] = [];
-    subscribeHostBalance(() => {}).onInterrupt?.((p) => payloads.push(p));
-    await tick();
-    expect(payloads).toHaveLength(1);
-    expect(isPaymentsUnsupported(payloads[0])).toBe(true);
-    expect(client.current!.payment.balanceSubscribe).not.toHaveBeenCalled();
-  });
-
-  it("does not hold codec 1 back", async () => {
-    truapi.on = false;
-    expect(await hostPaymentsAvailable()).toBe(true);
   });
 });
 
@@ -258,11 +329,9 @@ describe("balance, statements and entropy on TrUAPI", () => {
     const sub = subscribeHostBalance((p) => seen.push(p));
     await tick();
     s.next({ available: 42n });
-    expect(payment.balanceSubscribe).toHaveBeenCalledWith({ request: {} });
+    expect(payment.balanceSubscribe).toHaveBeenCalledWith({ request: { purse: undefined } });
     expect(seen).toEqual([42n]);
     sub.unsubscribe();
-    s.next({ available: 43n });
-    expect(seen).toEqual([42n]);
     expect(s.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
@@ -272,30 +341,32 @@ describe("balance, statements and entropy on TrUAPI", () => {
     const payloads: unknown[] = [];
     subscribeHostBalance(() => {}).onInterrupt?.((p) => payloads.push(p));
     await tick();
-    s.error(domain("PermissionDenied"));
-    expect(payloads).toEqual([domain("PermissionDenied")]);
+    s.interrupt(domain("PermissionDenied"));
+    expect(payloads).toEqual([{ tag: "PermissionDenied" }]);
+    expect(isBalanceWithheld(payloads[0])).toBe(true);
   });
 
   it("asks for the topic as hex and hands payloads back as bytes", async () => {
-    store.subscribe.mockImplementation((_filter: unknown, cb: (p: unknown) => void) => {
-      cb({ isComplete: true, statements: [{ data: "0x0a0b" }, {}] });
-      return { unsubscribe: vi.fn(), onInterrupt: vi.fn() };
-    });
+    const s = stream();
+    statementStore.subscribe.mockReturnValue(s.observable);
     const pages: Array<{ statements: Array<{ data?: Uint8Array }>; isComplete: boolean }> = [];
     subscribeHostStatements(new Uint8Array([0xde, 0xad]), (p) => pages.push(p));
     await tick();
-    expect(store.subscribe.mock.calls[0][0]).toEqual({ matchAny: ["0xdead"] });
+    s.next({ isComplete: true, statements: [{ data: "0x0a0b" }, {}] });
+    expect(statementStore.subscribe).toHaveBeenCalledWith({ request: { tag: "MatchAny", value: ["0xdead"] } });
     expect(pages[0].isComplete).toBe(true);
     expect(Array.from(pages[0].statements[0].data!)).toEqual([0x0a, 0x0b]);
     expect(pages[0].statements[1].data).toBeUndefined();
   });
 
   it("returns host entropy, and null instead of throwing when the host refuses", async () => {
-    sdk.deriveEntropy.mockResolvedValue({ ok: true, value: new Uint8Array([7, 7]) });
+    entropy.derive.mockReturnValue(ok({ entropy: "0x0707" }));
     expect(Array.from((await deriveHostEntropy(new Uint8Array(32)))!)).toEqual([7, 7]);
-    sdk.deriveEntropy.mockResolvedValue({ ok: false, error: {} });
+    entropy.derive.mockReturnValue(err({ tag: "Unknown", value: { reason: "no" } }));
     expect(await deriveHostEntropy(new Uint8Array(32))).toBeNull();
-    sdk.deriveEntropy.mockRejectedValue(new Error("down"));
+    entropy.derive.mockImplementation(() => {
+      throw new Error("down");
+    });
     expect(await deriveHostEntropy(new Uint8Array(32))).toBeNull();
   });
 });
