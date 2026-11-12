@@ -12,19 +12,21 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import * as Sentry from "@sentry/nextjs";
 import { SubpageHeader, iconButtonClass } from "@/components/subpage-header";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatLogsAsText } from "@/lib/debug/log-capture";
+import { saveTextFile } from "@/lib/utils/save-file";
 
 /**
  * Settings → Help us fix an issue: a user problem report. Description +
  * optional screenshots + optional technical details (the captured console
- * log) are sent as one Sentry event with attachments. The logs icon in the
- * header opens the raw log list (/settings/logs).
+ * log, secrets redacted) go out through the device's share sheet, so the
+ * merchant picks where the report is sent — the terminal itself sends nothing
+ * over the network. Without file sharing the report is saved as a text file
+ * instead. The logs icon in the header opens the raw log list (/settings/logs).
  */
 
 const MAX_DESCRIPTION = 1200;
@@ -37,6 +39,8 @@ interface Attachment {
 }
 
 type SendState = "form" | "sending" | "error" | "success";
+
+const REPORT_TITLE = "Terminal problem report";
 
 function formatSize(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / (1024 * 1024)))} MB`;
@@ -79,33 +83,27 @@ export default function ReportIssuePage() {
 
   const handleSend = async () => {
     setSendState("sending");
+    const logs = includeTechnical ? formatLogsAsText() : null;
     try {
-      const fileBuffers = await Promise.all(
-        attachments.map(async ({ file }) => ({
-          filename: file.name,
-          data: new Uint8Array(await file.arrayBuffer()),
-        })),
-      );
+      const files = attachments.map(({ file }) => file);
+      if (logs) files.push(new File([logs], "console-logs.txt", { type: "text/plain" }));
 
-      Sentry.withScope((scope) => {
-        scope.setTag("report.kind", "user-report");
-        scope.setExtra("description", description);
-        for (const attachment of fileBuffers) scope.addAttachment(attachment);
-        if (includeTechnical) {
-          scope.addAttachment({ filename: "console-logs.txt", data: formatLogsAsText() });
-        }
-        Sentry.captureMessage(
-          `User report: ${description.slice(0, 120)}`,
-          "info",
+      if (typeof navigator !== "undefined" && navigator.share && navigator.canShare?.({ files })) {
+        await navigator.share({ title: REPORT_TITLE, text: description, files });
+      } else {
+        // No file sharing here: keep the description and the log in one file.
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        await saveTextFile(
+          `terminal-report-${stamp}.txt`,
+          `${REPORT_TITLE}\n\n${description}\n${logs ? `\n${logs}` : ""}`,
+          "text/plain",
         );
-      });
-
-      // flush() actually pushes the event out — its result is the only real
-      // "did it leave the device" signal we have.
-      const flushed = await Sentry.flush(5000);
-      setSendState(flushed ? "success" : "error");
-    } catch {
-      setSendState("error");
+      }
+      setSendState("success");
+    } catch (error) {
+      // Dismissing the share sheet is not a failure — back to the form.
+      if (error instanceof Error && error.name === "AbortError") setSendState("form");
+      else setSendState("error");
     }
   };
 
@@ -115,7 +113,7 @@ export default function ReportIssuePage() {
     return (
       <FullScreen>
         <Loader2 className="size-8 animate-spin text-fg-secondary mb-6" aria-hidden />
-        <p className="text-heading-l text-fg-primary">Sending…</p>
+        <p className="text-heading-l text-fg-primary">Preparing…</p>
       </FullScreen>
     );
   }
@@ -127,7 +125,7 @@ export default function ReportIssuePage() {
           <X className="size-6" strokeWidth={3} aria-hidden />
         </div>
         <p className="text-heading-l text-fg-primary text-center mb-10">
-          Couldn&apos;t send.
+          Couldn&apos;t share the report.
           <br />
           Try again
         </p>
@@ -146,7 +144,7 @@ export default function ReportIssuePage() {
           <Check className="size-6" strokeWidth={3} aria-hidden />
         </div>
         <p className="text-heading-l text-fg-primary text-center mb-10">
-          Thanks! for your feedback we&apos;ll look into it
+          Thanks! Once you&apos;ve sent it, we&apos;ll look into it
         </p>
         <div className="flex-1" />
         <Button onClick={() => router.push("/settings")} className={PRIMARY_PILL}>

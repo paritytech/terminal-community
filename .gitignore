@@ -60,9 +60,6 @@ deployments/
 !.papi/descriptors/package.json
 !.papi/descriptors/.gitignore
 
-# Sentry
-.env.sentry-build-plugin
-
 # AI session / local state (keep intentional team config like CLAUDE.md,
 # .claude/commands, .claude/skills — ignore only per-developer state)
 .claude/settings.local.json

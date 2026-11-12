@@ -8,7 +8,7 @@ import {
 } from "@/lib/bulletin/client";
 import { isSymmetricEncryptedReport, decryptReportSymmetric } from "@/lib/crypto/symmetric-report";
 import { loadManualKey } from "@/lib/crypto/manual-key";
-import { journeyTracker, captureError, isExpectedError, withSpan, SpanOp } from "@/lib/telemetry";
+import { journeyTracker, captureError, isExpectedError, withSpan } from "@/lib/telemetry";
 
 export interface DailyReportItem {
   name: string;
@@ -98,7 +98,6 @@ export function useBulletin(): UseBulletinReturn {
 
         const result = await withSpan(
           "bulletin.upload-report",
-          SpanOp.IPFS_UPLOAD,
           () => uploadToBulletinChain(jsonBytes),
           { "report.size_bytes": jsonBytes.byteLength },
         );
@@ -141,7 +140,6 @@ export function useBulletin(): UseBulletinReturn {
         // we can see whether gateway latency or decryption is the bottleneck.
         const data = await withSpan(
           "bulletin.fetch-report",
-          SpanOp.IPFS_FETCH,
           () => fetchJsonFromBulletin<DailyReport | Record<string, unknown>>(cid),
           { cid },
         );
@@ -158,7 +156,6 @@ export function useBulletin(): UseBulletinReturn {
           }
           const reportJson = withSpan(
             "bulletin.decrypt-report",
-            SpanOp.CRYPTO_DECRYPT,
             () => decryptReportSymmetric(data, key),
           );
           key.fill(0);

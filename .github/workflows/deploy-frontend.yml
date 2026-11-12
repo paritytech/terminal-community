@@ -70,15 +70,6 @@ jobs:
           NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
           # NEXT_PUBLIC_* are baked into the JS bundle at build — must live on
           # this step, not on Deploy (where they'd be a no-op).
-          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
-          # Disable automatic tracing in production — baked explicitly so the
-          # bundle never falls back to a higher rate regardless of code default.
-          # Raise (e.g. 0.1) only if you want a sample of transactions traced.
-          NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: '1.0'
-          # main is the pinned production product; PR deploys go to their own
-          # live preview domain (not pinned in the app). Label them distinctly so
-          # the Sentry dashboard can separate prod traffic from preview traffic.
-          NEXT_PUBLIC_SENTRY_ENVIRONMENT: ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
           # Contract wiring. CI has no .env.local (gitignored) and never runs
           # the contract deploy, so without these the build bakes the
           # lib/contracts/config.ts defaults. They're public values, so they

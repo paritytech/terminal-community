@@ -1,17 +1,10 @@
 /**
- * Browser-side Sentry init. Next.js loads this automatically before any app
- * code runs (no manual import needed), so errors thrown during the very first
- * render are captured.
- *
- * Don't move this into a React component — `Sentry.init()` inside a
- * `useEffect` would miss early-render errors and race-condition with other
- * hooks.
+ * Browser-side boot. Next.js loads this automatically before any app code
+ * runs (no manual import needed), so the polyfill and the log capture below
+ * are in place for the very first render.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { installLogCapture } from "@/lib/debug/log-capture";
-import { commonInitOptions } from "@/lib/telemetry/sentry-init";
-import { getE2eTag } from "@/lib/telemetry/e2e-tag";
 
 // ── Promise.withResolvers polyfill (old Android WebViews) ───────────
 //
@@ -37,7 +30,7 @@ if (typeof Promise.withResolvers !== "function") {
 // Mirror every console.* call (and uncaught errors) into an in-memory buffer
 // so Settings → Debug logs can export them — phones in the host webview have
 // no dev console. Installed first so it sits beneath every other wrapper and
-// catches everything, including Sentry's own logging.
+// catches everything.
 installLogCapture();
 
 // ── Suppress Next.js dev-only `missingSlots` Set warning ────────────
@@ -98,37 +91,3 @@ if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
   setTimeout(install, 100);
   setTimeout(install, 500);
 }
-
-// ── Sentry ──────────────────────────────────────────────────────────
-//
-// Telemetry must never take the terminal down. Product sandboxes rewrite
-// browser globals: the Polkadot app's TrUAPI runtime "deletes" XMLHttpRequest
-// by redefining it as a getter that returns `undefined`, so
-// `"XMLHttpRequest" in window` stays true while `XMLHttpRequest.prototype`
-// throws — which is exactly what Sentry's default `BrowserApiErrors`
-// integration does in `setupOnce`. Left alone, `Sentry.init()` throws before
-// React hydrates and the merchant is stuck on a static "Connecting to host…"
-// (iOS nightly, 2026-09-15). So: only patch XHR when it really is a
-// constructor, and treat any init failure as "no telemetry", never "no app".
-const xhrAvailable = typeof XMLHttpRequest === "function";
-try {
-  Sentry.init({
-    ...commonInitOptions(),
-    integrations: [
-      Sentry.browserApiErrorsIntegration({ XMLHttpRequest: xhrAvailable }),
-      // Keep error-only session replay (no session recording, 100% on error).
-      Sentry.replayIntegration(),
-    ],
-    replaysSessionSampleRate: 0.0,
-    replaysOnErrorSampleRate: 1.0,
-  });
-
-  // Tag synthetic E2E traffic so production error alerts can exclude it.
-  const e2eTag = getE2eTag();
-  if (e2eTag) Sentry.setTag("tag", e2eTag);
-} catch (error) {
-  console.warn("[telemetry] Sentry init failed; continuing without error reporting:", error);
-}
-
-// Required for Next.js App Router navigation instrumentation
-export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

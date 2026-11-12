@@ -1,18 +1,16 @@
 /**
- * User-journey tracking on top of Sentry.
+ * User-journey tracking, written to the local log.
  *
  * A "journey" is a multi-step user-perceived flow (e.g. terminal-payment:
  * QR generated → payment detected → sale saved → receipt rendered → done).
- * Each journey emits one parent span with the total duration, plus child
- * "phase" spans per milestone so Sentry shows the waterfall.
+ * Each milestone is logged as it happens, and the journey's end is logged
+ * with its total duration, milestones and attributes.
  *
  * The exported `journeyTracker` is a module-level singleton so any component
  * or hook can record milestones without prop-drilling the instance.
  */
 
 "use client";
-
-import * as Sentry from "@sentry/nextjs";
 
 // --- App-specific journey catalog ---
 
@@ -27,19 +25,7 @@ export type AppJourneyType =
   | "encryption-key-set"
   | "authenticate";
 
-export const APP_JOURNEY_OPS: Record<AppJourneyType, string> = {
-  "page-load": "journey.page-load",
-  "items-checkout": "journey.items-checkout",
-  "terminal-payment": "journey.terminal-payment",
-  "daily-report-save": "journey.daily-report-save",
-  "daily-report-finalize": "journey.daily-report-finalize",
-  "report-decrypt": "journey.report-decrypt",
-  "bulletin-index-read": "journey.bulletin-index-read",
-  "encryption-key-set": "journey.encryption-key-set",
-  authenticate: "journey.authenticate",
-};
-
-// --- Generic tracker — do not modify shape; only edit the catalog above. ---
+// --- Generic tracker — only edit the catalog above. ---
 
 interface ActiveJourney<T> {
   type: T;
@@ -51,11 +37,6 @@ interface ActiveJourney<T> {
 
 export class JourneyTracker<T extends string> {
   private active = new Map<T, ActiveJourney<T>>();
-  private spanOps: Record<T, string>;
-
-  constructor(spanOps: Record<T, string>) {
-    this.spanOps = spanOps;
-  }
 
   start(
     type: T,
@@ -110,11 +91,8 @@ export class JourneyTracker<T extends string> {
     if (!journey) return;
     this.active.delete(type);
 
-    this._emitSpan(journey, type, { code: 1, message: "ok" });
-    this._emitPhaseSpans(journey, type);
-
     const totalMs = performance.now() - journey.startedAt;
-    console.info(`[Journey:${type}] completed in ${totalMs.toFixed(0)}ms`);
+    console.info(`[Journey:${type}] completed in ${totalMs.toFixed(0)}ms`, this._summary(journey));
   }
 
   fail(type: T, reason?: string): void {
@@ -122,19 +100,11 @@ export class JourneyTracker<T extends string> {
     if (!journey) return;
     this.active.delete(type);
 
-    const resolvedReason = reason ?? "unknown";
     journey.sad = true;
-    this._emitSpan(
-      journey,
-      type,
-      { code: 2, message: resolvedReason },
-      resolvedReason,
-    );
-    this._emitPhaseSpans(journey, type);
-
     const totalMs = performance.now() - journey.startedAt;
     console.info(
-      `[Journey:${type}] failed after ${totalMs.toFixed(0)}ms: ${reason}`,
+      `[Journey:${type}] failed after ${totalMs.toFixed(0)}ms: ${reason ?? "unknown"}`,
+      this._summary(journey),
     );
   }
 
@@ -149,65 +119,11 @@ export class JourneyTracker<T extends string> {
     return this.active.has(type);
   }
 
-  private _emitSpan(
-    journey: ActiveJourney<T>,
-    type: T,
-    status: { code: 0 | 1 | 2; message: string },
-    failureReason?: string,
-  ): void {
-    const totalMs = performance.now() - journey.startedAt;
-
-    const attributes: Record<string, string | number | boolean> = {
-      "journey.type": type,
-      "journey.duration_ms": Math.round(totalMs),
-      "journey.sad": journey.sad ? "true" : "false",
-      ...journey.attributes,
-    };
-    if (failureReason) {
-      attributes["journey.failure_reason"] = failureReason;
-    }
-    for (const [name, elapsed] of journey.milestones) {
-      attributes[`journey.milestone.${name}_ms`] = Math.round(elapsed);
-    }
-
-    const op = this.spanOps[type];
-    const startTime = (performance.timeOrigin + journey.startedAt) / 1000;
-    const endTime = (performance.timeOrigin + performance.now()) / 1000;
-
-    const span = Sentry.startSpanManual(
-      { name: `journey:${type}`, op, attributes, startTime },
-      (s) => s,
-    );
-    span.setStatus(status);
-    span.end(endTime);
-  }
-
-  private _emitPhaseSpans(journey: ActiveJourney<T>, type: T): void {
-    const op = this.spanOps[type];
-    const phaseOp = `${op}.phase`;
-    const startTime = (performance.timeOrigin + journey.startedAt) / 1000;
-    const milestoneEntries = [...journey.milestones.entries()].sort(
-      (a, b) => a[1] - b[1],
-    );
-
-    for (const [name, elapsed] of milestoneEntries) {
-      const phaseSpan = Sentry.startSpanManual(
-        {
-          name,
-          op: phaseOp,
-          attributes: { "journey.type": type },
-          startTime,
-        },
-        (s) => s,
-      );
-      phaseSpan.setStatus({ code: 1, message: "ok" });
-      phaseSpan.end(
-        (performance.timeOrigin + journey.startedAt + elapsed) / 1000,
-      );
-    }
+  private _summary(journey: ActiveJourney<T>): Record<string, string | number | boolean> {
+    const summary: Record<string, string | number | boolean> = { sad: journey.sad, ...journey.attributes };
+    for (const [name, elapsed] of journey.milestones) summary[`${name}_ms`] = Math.round(elapsed);
+    return summary;
   }
 }
 
-export const journeyTracker = new JourneyTracker<AppJourneyType>(
-  APP_JOURNEY_OPS,
-);
+export const journeyTracker = new JourneyTracker<AppJourneyType>();

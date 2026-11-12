@@ -13,6 +13,7 @@
  */
 
 import { saveTextFile } from "@/lib/utils/save-file";
+import { scrubText } from "@/lib/telemetry/scrub";
 
 export type LogLevel = "log" | "info" | "warn" | "error" | "debug" | "event";
 
@@ -132,7 +133,7 @@ export function formatLogsAsText(): string {
     .map((e) => `${new Date(e.t).toISOString()} ${e.level.toUpperCase().padEnd(5)} ${e.text}`)
     .join("\n");
 
-  return `${header}\n${lines}\n`;
+  return scrubText(`${header}\n${lines}\n`);
 }
 
 async function downloadText(text: string, filename: string): Promise<void> {
