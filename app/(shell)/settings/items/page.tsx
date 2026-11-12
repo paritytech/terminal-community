@@ -64,6 +64,7 @@ export default function CheckoutItemsSettingsPage() {
             </span>
             <button
               role="switch"
+              aria-label="Show Items in Checkout"
               aria-checked={enabled === true}
               disabled={isLoading}
               onClick={() => void setEnabled(!(enabled === true))}

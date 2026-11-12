@@ -248,7 +248,7 @@ export default function HistoryPage() {
             {/* Status — status fills are theme-invariant, so the mark is static
                 white. Reverted claims take the error fill; a claim still
                 confirming, or one that settled short, says so underneath. */}
-            <div className="flex flex-col items-center pb-6 text-center">
+            <div data-testid="history-detail-status" data-claim-state={claimState} className="flex flex-col items-center pb-6 text-center">
               <span
                 className={`size-14 rounded-full text-fg-static-white flex items-center justify-center mb-3 ${
                   claimState === "reverted" ? "bg-status-error" : "bg-status-success"
@@ -496,6 +496,8 @@ export default function HistoryPage() {
                         return (
                           <button
                             key={sale.saleId}
+                            data-testid={`history-row-${sale.saleId.slice(-4).toLowerCase()}`}
+                            data-claim-state={state}
                             onClick={() => setSelectedSale(sale)}
                             className="w-full flex items-center gap-3 px-2 py-2.5 rounded-medium text-left hover:bg-surface-container transition-colors"
                           >
@@ -513,7 +515,7 @@ export default function HistoryPage() {
                               <span className="block text-label-l text-fg-primary">
                                 Order #{sale.saleId.slice(-4).toUpperCase()}
                               </span>
-                              <span className="block text-body-m text-fg-tertiary">
+                              <span data-testid="history-row-status" className="block text-body-m text-fg-tertiary">
                                 {statusLine} · {time}
                               </span>
                             </span>
