@@ -7,8 +7,9 @@ import { applyHostTheme } from "@/lib/config/appearance"
 /**
  * Keeps the app's theme in step with the Polkadot app's.
  *
- * Every host theme event maps Light/Dark onto Berlin Day/Night and is handed
- * to the appearance preference (lib/config/appearance.ts), which applies it
+ * Every host theme event maps onto the design-system theme of the same name
+ * (Light/Dark onto Berlin Day/Night when the host names none we know; see
+ * lib/host/theme.ts) and is handed to the appearance preference (lib/config/appearance.ts), which applies it
  * while the merchant is on "Follow Polkadot app" and only records it when
  * they have picked a theme by hand in Settings → Appearance. Applying goes
  * through `setTheme`: `data-theme` on <html> re-resolves every token at
@@ -23,7 +24,8 @@ export function HostThemeSync() {
   useEffect(() => {
     return subscribeHostTheme((theme) => {
       const choice = hostThemeToChoice(theme)
-      console.log(`[HostTheme] ${theme.name.tag}/${theme.variant} → ${choice}`)
+      const name = theme.name.tag === "Custom" ? `Custom(${theme.name.value})` : theme.name.tag
+      console.log(`[HostTheme] ${name}/${theme.variant} → ${choice}`)
       applyHostTheme(choice)
     })
   }, [])
