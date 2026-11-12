@@ -8,7 +8,7 @@
  * reliably with Solidity contracts on Revive pallet.
  */
 
-import { ethers } from "ethers";
+import { Interface, type Result } from "ethers";
 import { Binary } from "polkadot-api";
 import { T3rminalBulletinIndexABI } from "./abis";
 import { getContractAddresses } from "./config";
@@ -18,7 +18,7 @@ import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import type { HostTxCreator } from "@/lib/host/connection";
 
 // ABI interface for encoding/decoding calldata (no network calls)
-const iface = new ethers.Interface(T3rminalBulletinIndexABI);
+const iface = new Interface(T3rminalBulletinIndexABI);
 
 // Alice on Paseo — known mapped account for read-only Revive calls.
 // ReviveApi.call requires a mapped origin even for pure view functions.
@@ -32,7 +32,7 @@ const READ_ORIGIN = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
 async function readContract(
   functionName: string,
   args: unknown[]
-): Promise<ethers.Result> {
+): Promise<Result> {
   const { bulletinIndex } = getContractAddresses();
   const calldata = iface.encodeFunctionData(functionName, args);
   const client = await getAPI();

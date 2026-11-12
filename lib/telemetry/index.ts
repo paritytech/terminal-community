@@ -1,13 +1,12 @@
 /**
  * Telemetry barrel — consume from `@/lib/telemetry`, not from the internal
- * files. Keeps Sentry imports centralized so swapping providers later is
- * a one-file change.
+ * files. Everything here writes to the local log only (see ./events.ts); the
+ * terminal sends nothing to a telemetry service.
  */
 
 export { journeyTracker, JourneyTracker } from "./journey-tracker";
 export type { AppJourneyType } from "./journey-tracker";
-export { withSpan, breadcrumb, captureError, captureWarning, isExpectedError } from "./sentry-helpers";
-export { withPaymentTrace } from "./payment-trace";
+export { withSpan, breadcrumb, captureError, captureWarning, isExpectedError } from "./events";
 export {
   recordCoinagePaymentPhase,
   recordPaymentOutcome,
@@ -20,5 +19,3 @@ export type {
   PaymentOutcomeParams,
   FinalizationLatencyParams,
 } from "./payment-metrics";
-export { SpanOp } from "./span-ops";
-export type { SpanOpValue } from "./span-ops";

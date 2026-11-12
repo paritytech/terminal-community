@@ -244,7 +244,7 @@ function TerminalPageInner() {
 
     // Journey starts here — first frame the merchant sees the QR. We measure
     // until the success screen renders (or fail/abandon). Admin identifiers
-    // (when bound) are also attached so Sentry traces can be filtered per
+    // (when bound) are also attached so the logged journey names the
     // merchant/terminal.
     if (!journeyTracker.isActive("terminal-payment")) {
       journeyTracker.start("terminal-payment", {

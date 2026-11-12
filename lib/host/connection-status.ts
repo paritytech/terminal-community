@@ -12,12 +12,6 @@
 export type HostConnectionFailure =
   /** Not inside a Polkadot host container (plain browser tab). */
   | "not-in-host"
-  /**
-   * The TrUAPI (Rust core) runtime answered, but not with an account. Kept
-   * as its own reason because the two runtimes fail for different causes and
-   * the first question on any report is which one was live.
-   */
-  | "truapi-runtime"
   /** Inside a host, but the SDK transport refused the environment. */
   | "environment"
   /** Host answered but returned no product or legacy account. */
@@ -45,13 +39,6 @@ export function describeHostConnectionFailure(
       return {
         title: "Not inside the Polkadot app",
         body: "Open the terminal from the Polkadot app to connect a merchant account.",
-      }
-    case "truapi-runtime":
-      return {
-        title: "No merchant account",
-        body:
-          "The Polkadot app is running this terminal on its newer product runtime and did not return an account.",
-        hint: "Shake the phone to open Debug Settings and turn “TrUAPI runtime (products)” off to fall back, then restart the app.",
       }
     case "environment":
       return {

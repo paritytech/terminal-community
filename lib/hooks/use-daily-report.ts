@@ -453,7 +453,7 @@ export function useDailyReport(): UseDailyReportReturn {
         // On-chain mirror leg (step 4). Gated by Settings → On-chain indexing
         // (on by default) and a merchant+terminal identity. Never rejects —
         // on-chain indexing is non-critical by design and every failure is
-        // contained here (warn + Sentry), exactly like the previous
+        // contained here (warn + error log), exactly like the previous
         // sequential implementation.
         const runReviveMirror = async (): Promise<boolean> => {
           if (!(onchainEnabled && isInHost() && account?.address)) return false;

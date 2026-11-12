@@ -1,8 +1,7 @@
 export {
   detectHostEnvironment,
   isInHost,
-  isTruApiRuntime,
-  isProductWebSocketBlocked,
+  onTruApi,
   type HostEnvironment,
 } from "./detect"
 export {
@@ -10,7 +9,7 @@ export {
   type HostConnectionFailure,
   type HostConnectionState,
 } from "./connection-status"
-export { connectToHost, isHostConnected } from "./connection"
+export { connectToHost } from "./connection"
 export {
   getPaseoIndividualityClient,
   getPaseoIndividualityClientAsync,

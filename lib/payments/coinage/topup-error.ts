@@ -1,5 +1,4 @@
-import { PaymentTopUpErr } from "@novasamatech/host-api";
-import { ClaimCancelledError, NotClaimedError, NothingClaimedError } from "./claim";
+import { ClaimCancelledError, NotClaimedError, NothingClaimedError, TopUpRefusal } from "./claim";
 
 /**
  * Stable, queryable kind for a claim failure (string attr → count_if), and
@@ -48,10 +47,12 @@ function textOf(err: unknown): string {
 export function classifyTopupError(err: unknown): TopupErrorKind {
   if (err instanceof ClaimCancelledError) return "cancelled";
   if (err instanceof NothingClaimedError || err instanceof NotClaimedError) return "not_claimed";
-  if (err instanceof PaymentTopUpErr.InvalidSource) return "invalid_source";
-  if (err instanceof PaymentTopUpErr.AlreadyExists || err instanceof PaymentTopUpErr.SourceBusy) return "host";
-  // Older hosts (host-api 0.9.x) still send this variant.
-  if (hostErrorName(err) === "PaymentTopUpErr::InsufficientFunds") return "declined";
+  if (err instanceof TopUpRefusal) {
+    if (err.kind === "InvalidSource") return "invalid_source";
+    if (err.kind === "AlreadyExists" || err.kind === "SourceBusy") return "host";
+    // Older hosts (host-api 0.9.x) still send this variant.
+    if (err.kind === "InsufficientFunds") return "declined";
+  }
 
   const text = textOf(err);
   if (/NotClaimed|no coins were claimed|nothing (was )?claimed/i.test(text)) return "not_claimed";

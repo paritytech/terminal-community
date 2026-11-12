@@ -5,7 +5,7 @@ import {
 } from "@/lib/host/connection-status";
 import { isTruApiRuntime } from "@/lib/host/detect";
 
-const REASONS: HostConnectionFailure[] = ["not-in-host", "truapi-runtime", "environment", "no-accounts", "error"];
+const REASONS: HostConnectionFailure[] = ["not-in-host", "environment", "no-accounts", "error"];
 
 describe("describeHostConnectionFailure", () => {
   it("has a title and body for every reason", () => {
@@ -14,14 +14,6 @@ describe("describeHostConnectionFailure", () => {
       expect(copy.title.length).toBeGreaterThan(0);
       expect(copy.body.length).toBeGreaterThan(0);
     }
-  });
-
-  it("tells the tester how to fall back off the TrUAPI runtime", () => {
-    // The runtime is supported now (codec 2), so this reason means "connected
-    // but no account" — the hint is a way back, not the only way forward.
-    const copy = describeHostConnectionFailure("truapi-runtime");
-    expect(copy.body).toMatch(/did not return an account/);
-    expect(copy.hint).toMatch(/Debug Settings/);
   });
 
   it("surfaces the thrown message for generic errors, with a fallback", () => {

@@ -5,8 +5,6 @@
  * imports only matter for `next dev` and `next build`.
  */
 
-import * as Sentry from "@sentry/nextjs";
-
 // ── Suppress Next.js dev-only `missingSlots` Set warning (server side) ──
 //
 // React 19's RSC serializer runs on the server while encoding the
@@ -50,14 +48,3 @@ if (process.env.NODE_ENV !== "production") {
     globalThis.console.error = filter;
   }
 }
-
-export async function register() {
-  if (process.env.NEXT_RUNTIME === "nodejs") {
-    await import("./sentry.server.config");
-  }
-  if (process.env.NEXT_RUNTIME === "edge") {
-    await import("./sentry.edge.config");
-  }
-}
-
-export const onRequestError = Sentry.captureRequestError;

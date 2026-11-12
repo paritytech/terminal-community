@@ -31,7 +31,7 @@ import { PUSD_DECIMALS } from "@/lib/utils/asset-ids";
 import { generateEphemeralKeypair, generatePaymentId } from "./keys";
 import { deriveTopic } from "./topic";
 import { buildPayW3sDeeplink, normalizeAmount } from "./deeplink";
-import { withSpan, captureWarning, withPaymentTrace } from "@/lib/telemetry";
+import { withSpan, captureWarning } from "@/lib/telemetry";
 import { classifyTopupError, describeTopupFailure, type TopupErrorKind } from "./topup-error";
 import {
   claimCoins,
@@ -255,17 +255,11 @@ export function useCoinagePayment(
         // app along the way (see ./claim.ts). lib/host/payments picks the
         // client for this launch's wire codec; both report the same statuses.
         const claimHost = await createClaimHost((call) =>
-          // trace_id = payment id ⇒ this claim correlates cross-system
-          // (payer / processor) in one Sentry trace. See e2e-correlation design.
-          withPaymentTrace(id, () =>
-            withSpan("coinage topUp", "payment.coinage.topup", call, {
-              "topup.registration": String(registrations),
-              "payment.id": id,
-              "payment.topic": toHex(topic),
-              "pay.role": "terminal",
-              "pay.phase": "claimed",
-            }),
-          ),
+          withSpan("coinage topUp", call, {
+            registration: registrations,
+            paymentId: id,
+            topic: toHex(topic),
+          }),
         );
         if (cancelled) return;
 

@@ -414,7 +414,6 @@ export async function deployBulletinIndex(
         upsertEnvFile(resolve(APP_ROOT, ".env.local"), {
           NEXT_PUBLIC_NETWORK: network.key,
           NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS: record.bulletinIndex,
-          NEXT_PUBLIC_ASSET_HUB_WS: network.mainChain.wsUrl,
         });
         return {
           network,
@@ -442,7 +441,6 @@ export async function deployBulletinIndex(
     upsertEnvFile(resolve(APP_ROOT, ".env.local"), {
       NEXT_PUBLIC_NETWORK: network.key,
       NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS: contractAddress,
-      NEXT_PUBLIC_ASSET_HUB_WS: network.mainChain.wsUrl,
     });
 
     ui.success(`Contract deployed — ${contractAddress}`);

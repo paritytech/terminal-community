@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { fontVariablesClassName, THEME_INIT_SCRIPT } from "@/lib/fonts";
@@ -8,9 +7,8 @@ import "./globals.css";
 
 /**
  * Last-resort error boundary for unhandled crashes anywhere in the App
- * Router tree. Sentry's `captureUnderscoreErrorException` records the error
- * with the right context (next.js framework metadata, route, etc.) so it
- * shows up grouped in Issues rather than as a generic crash.
+ * Router tree. The error goes to the console, so it lands in the captured
+ * log that Settings → Report a problem exports.
  *
  * Replaces the root layout, so it carries its own <html>: the same font
  * variables, theme bootstrap and stylesheet, so it renders in the active
@@ -24,7 +22,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    console.error("[GlobalError] unhandled error:", error);
   }, [error]);
 
   return (

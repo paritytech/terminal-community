@@ -3,8 +3,8 @@
 // The live contract path (lib/contracts/revive-bulletin-index.ts via PAPI)
 // only consumes getContractAddresses().bulletinIndex; the chain RPC endpoint
 // for that path comes from lib/host/provider.ts, not the `rpcUrl` here. The
-// chainId/rpcUrl fields feed the legacy ethers provider + daily-report
-// telemetry only.
+// chainId/rpcUrl fields are only written into daily reports as metadata;
+// nothing connects to `rpcUrl`.
 //
 // Both the active network and the contract address are overridable at build
 // time via NEXT_PUBLIC_NETWORK and NEXT_PUBLIC_BULLETIN_INDEX_ADDRESS, which

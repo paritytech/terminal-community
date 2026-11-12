@@ -2,12 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Web3Provider } from "@/lib/web3";
 import { ReportJobProvider } from "@/lib/components/report-job-provider";
 import { ServiceWorkerRegister } from "@/lib/components/service-worker-register";
-import { SentryTags } from "@/lib/components/sentry-tags";
 import { TestHook } from "@/lib/components/test-hook";
 import { HostThemeSync } from "@/lib/components/host-theme-sync";
 import { TopUpWatcherBoot } from "@/lib/components/topup-watcher-boot";
 import { fontVariablesClassName, THEME_INIT_SCRIPT } from "@/lib/fonts";
-import { HOST_RUNTIME_INIT_SCRIPT } from "@/lib/host/runtime-init";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -49,14 +47,10 @@ export default function RootLayout({
   return (
     <html lang="en" className={fontVariablesClassName}>
       <head>
-        {/* Must run before the first import: it decides which host client
-            may own the transport. See lib/host/runtime-init.ts. */}
-        <script dangerouslySetInnerHTML={{ __html: HOST_RUNTIME_INIT_SCRIPT }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
         <Web3Provider>
-          <SentryTags />
           <TestHook />
           <HostThemeSync />
           <TopUpWatcherBoot />

@@ -39,7 +39,6 @@
  * fixed; see docs-internal/coinage-host-topup.md.
  */
 
-import { PaymentTopUpErr } from "@novasamatech/host-api";
 import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 
 /** One progress report from `subscribeTopUpStatus`, in the wrapper's shape. */
@@ -68,8 +67,9 @@ export interface TopUpStatusSubscription {
   onInterrupt?: (callback: (payload: unknown) => void) => unknown;
 }
 
-/** The two host calls a claim needs — the wrapper's payment manager, or a fake in tests. */
+/** The two host calls a claim needs — this launch's host (lib/host/payments.ts), or a fake in tests. */
 export interface ClaimHost {
+  /** Register the top-up. A refusal rejects with `TopUpRefusal`. */
   topUp: (amountPlanck: bigint, keys: Uint8Array[], id: Uint8Array) => Promise<void>;
   subscribeTopUpStatus: (
     id: Uint8Array,
@@ -147,6 +147,30 @@ export function topUpIdFromHex(hex: string): Uint8Array {
   return out;
 }
 
+/**
+ * Why the host refused to register a top-up. Both host clients map their own
+ * refusals onto these kinds (lib/host/payments.ts), so the claim logic below
+ * does not depend on either transport:
+ *
+ *   AlreadyExists     — this id is already registered; follow it
+ *   SourceBusy        — an earlier registration of these coins is still live
+ *   InvalidSource     — the coin keys are unusable; final
+ *   InsufficientFunds — a 0.9.x host's answer, kept for old devices
+ *   Unknown           — anything else, with the host's words in `reason`
+ */
+export type TopUpRefusalKind = "AlreadyExists" | "SourceBusy" | "InvalidSource" | "InsufficientFunds" | "Unknown";
+
+export class TopUpRefusal extends Error {
+  constructor(
+    readonly kind: TopUpRefusalKind,
+    readonly reason?: string,
+  ) {
+    super(reason ? `top-up refused (${kind}): ${reason}` : `top-up refused (${kind})`);
+    // The codec-1 error names, so telemetry queries on them keep matching.
+    this.name = `PaymentTopUpErr::${kind}`;
+  }
+}
+
 /** Thrown when the claim is stopped because the sale ended. */
 export class ClaimCancelledError extends Error {
   override readonly name = "ClaimCancelledError";
@@ -195,7 +219,7 @@ function describePayload(payload: unknown): string {
  * dropped bridge call, an `Unknown` — may pass on the next try.
  */
 export function isRetryableTopUpError(error: unknown): boolean {
-  if (error instanceof PaymentTopUpErr.InvalidSource) return false;
+  if (error instanceof TopUpRefusal && error.kind === "InvalidSource") return false;
   if (error instanceof ClaimCancelledError) return false;
   return true;
 }
@@ -296,8 +320,9 @@ export async function claimCoins(opts: ClaimCoinsOptions): Promise<ClaimOutcome>
     try {
       await opts.host.topUp(amountPlanck, keys, id);
     } catch (error) {
-      if (error instanceof PaymentTopUpErr.AlreadyExists) return;
-      if (error instanceof PaymentTopUpErr.SourceBusy && attempt > 1) {
+      if (!(error instanceof TopUpRefusal)) throw error;
+      if (error.kind === "AlreadyExists") return;
+      if (error.kind === "SourceBusy" && attempt > 1) {
         id = opts.topUpId(attempt - 1);
         return;
       }

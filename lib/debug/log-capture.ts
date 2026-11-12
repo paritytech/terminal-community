@@ -13,6 +13,7 @@
  */
 
 import { saveTextFile } from "@/lib/utils/save-file";
+import { scrubText } from "@/lib/telemetry/scrub";
 
 export type LogLevel = "log" | "info" | "warn" | "error" | "debug" | "event";
 
@@ -132,7 +133,7 @@ export function formatLogsAsText(): string {
     .map((e) => `${new Date(e.t).toISOString()} ${e.level.toUpperCase().padEnd(5)} ${e.text}`)
     .join("\n");
 
-  return `${header}\n${lines}\n`;
+  return scrubText(`${header}\n${lines}\n`);
 }
 
 async function downloadText(text: string, filename: string): Promise<void> {
@@ -192,23 +193,4 @@ export async function shareLogs(): Promise<ShareLogsResult> {
   // 3. File download.
   await downloadText(text, filename);
   return "downloaded";
-}
-
-/**
- * POST the captured logs to a backend ingest URL (e.g. the terminal-log-service
- * `/ingest/:terminalId` endpoint). Sent as text/plain so it stays a CORS "simple"
- * request (no preflight); the service stores the body as-is. Throws on a non-2xx response.
- */
-export async function sendLogsTo(url: string, terminalId?: string): Promise<void> {
-  const headers: Record<string, string> = { "Content-Type": "text/plain" };
-  // The device identifies itself in a header so the ingest URL can stay a single
-  // deployment-wide value; the service files the batch under this id.
-  if (terminalId) headers["X-Terminal-Id"] = terminalId;
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: formatLogsAsText(),
-    keepalive: true,
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }

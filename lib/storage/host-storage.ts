@@ -56,12 +56,12 @@ async function getStorage(): Promise<StorageDriver> {
 
   if (isInHost()) {
     try {
-      // Two clients, one store. The codec-2 SDK exposes the same
-      // read/write/clear shape, so only the import differs — but it has to be
-      // chosen, not both loaded (see lib/host/runtime-init.ts).
+      // Two clients, one store. The TrUAPI SDK exposes the same
+      // read/write/clear shape, so only the import differs; each is loaded
+      // only on the runtime that uses it.
       const hostLocalStorage = await (async () => {
-        const { isTruApiRuntime } = await import("@/lib/host/detect")
-        if (isTruApiRuntime()) {
+        const { onTruApi } = await import("@/lib/host/detect")
+        if (await onTruApi()) {
           const { loadHostSdk } = await import("@/lib/host/sdk")
           const store = await (await loadHostSdk()).getHostLocalStorage()
           if (!store) throw new Error("host localStorage unavailable on the TrUAPI runtime")
