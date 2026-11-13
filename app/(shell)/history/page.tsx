@@ -458,7 +458,10 @@ export default function HistoryPage() {
                 </p>
               )}
               {groups.map(([groupLabel, sales]) => {
+                // Reverted sales stay listed (struck through) but credited
+                // nothing, so they are left out of the total, as on Home.
                 const groupTotal = sales.reduce((sum, sale) => {
+                  if (saleClaimState(sale) === "reverted") return sum;
                   const value = Number(sale.amount);
                   return sum + (Number.isFinite(value) ? value : 0);
                 }, 0);

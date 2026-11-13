@@ -176,13 +176,10 @@ test.describe("History", () => {
     );
   });
 
-  // BUG(app): History's day total sums every sale, including reverted ones
-  // (history/page.tsx group reduce: TODAY shows 23.50 CASH here), while
-  // Today's Income and Sales exclude them and SaleRecord.revertedAt documents
-  // "excluded from totals". The selector is proven by the passing
-  // "grouped by day" test above, so only the wrong value fails here.
+  // A reverted sale is listed but credited nothing: the day's total leaves it
+  // out, like Today's Income and Sales (SaleRecord.revertedAt: "excluded
+  // from totals").
   test("a day's total leaves reverted sales out", async ({ host }) => {
-    test.fail();
     await seedSalesAndOpen(host, FOUR_STATES, "/history");
     const frame = host.productFrame();
     await expect(frame.locator('[data-testid^="history-row-"][data-claim-state]')).toHaveCount(4, { timeout: 60_000 });
