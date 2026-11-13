@@ -103,6 +103,7 @@ export default function HistoryPage() {
     items: sale.items,
     subtotal: subtotalOf(sale),
     tip: sale.tip,
+    note: sale.note,
   });
 
   const handleViewReceipt = async (sale: SaleRecord) => {
@@ -123,6 +124,7 @@ export default function HistoryPage() {
       items: sale.items,
       subtotal: subtotalOf(sale),
       tip: sale.tip,
+      note: sale.note,
     });
     if (svg) setSvgReceipt(svg);
   };
@@ -143,6 +145,7 @@ export default function HistoryPage() {
       items: sale.items,
       subtotal: subtotalOf(sale),
       tip: sale.tip,
+      note: sale.note,
     });
   };
 

@@ -175,6 +175,10 @@ export function useBulletin(): UseBulletinReturn {
             );
           } catch (decryptError) {
             console.warn("[Bulletin] Decryption failed:", decryptError);
+            // The right key that still fails to open it means a damaged copy.
+            if (sealedWith && current && sealedWith === current) {
+              throw new Error("This report could not be decrypted: the stored copy looks damaged.");
+            }
             throw wrongKey(sealedWith);
           } finally {
             key.fill(0);

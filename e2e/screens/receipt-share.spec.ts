@@ -93,6 +93,14 @@ test.describe("receipt and share after a sale", () => {
     const receipt = receiptSvg(frame);
     await expect(receipt).toContainText("5.10");
     await expect(receipt).toContainText("Gift wrap", { timeout: 5_000 });
+
+    // The receipt reopened from History carries it too.
+    await frame.getByRole("button", { name: "Close receipt" }).click();
+    await frame.getByTestId("btn-done").click();
+    await frame.getByRole("link", { name: "History", exact: true }).click();
+    await frame.getByTestId(`history-row-${req.id.slice(-4)}`).click();
+    await frame.getByRole("button", { name: "Review Receipt" }).click();
+    await expect(frame.locator("svg").filter({ hasText: "Gift wrap" }).first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("Download receipt hands a PDF to the host's files bridge", async ({ host }) => {

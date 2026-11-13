@@ -177,6 +177,60 @@ describe("pending claims", () => {
     expect(claim.topUpIds).toEqual([id1, id2]);
   });
 
+  it("keeps looking past a newer registration that credited nothing", async () => {
+    // A retry after the first registration already took the coins: the host
+    // accepts the new id, which then settles NotClaimed.
+    const [id1, id2] = ids("pay-l", 1, 2);
+    await savePendingClaim({ paymentId: "pay-l", requestedAmount: "8.00", topUpIds: [id1, id2], draft });
+    const f = fakeHost({ [id2]: [{ type: "notClaimed" }], [id1]: [{ type: "claimed", finalized: true }] });
+    const d = deps(f.host);
+    expect(await resumePendingClaims(d.deps)).toBe(1);
+    expect(f.asked).toEqual([id2, id1]);
+    expect(d.added[0]).toMatchObject({ saleId: "pay-l", amount: "8.00", topUpId: id1 });
+  });
+
+  it("dates the sale when the claim was registered, not at the relaunch", async () => {
+    const [id1] = ids("pay-m", 1);
+    await savePendingClaim({ paymentId: "pay-m", requestedAmount: "2.00", topUpIds: [id1], draft });
+    const [{ createdAt }] = await getPendingClaims();
+    const d = deps(fakeHost({ [id1]: [{ type: "claimed", finalized: true }] }).host);
+    await resumePendingClaims(d.deps);
+    expect((d.added[0].timestamp as Date).toISOString()).toBe(createdAt);
+  });
+
+  it("does not let one stalled claim hold up the others, and keeps it for later", async () => {
+    const [stuck] = ids("pay-n", 1);
+    const [done] = ids("pay-o", 1);
+    await savePendingClaim({ paymentId: "pay-n", requestedAmount: "1.00", topUpIds: [stuck], draft });
+    await savePendingClaim({ paymentId: "pay-o", requestedAmount: "1.00", topUpIds: [done], draft });
+    const d = deps(fakeHost({ [stuck]: [{ type: "detecting" }], [done]: [{ type: "claimed", finalized: true }] }).host);
+    expect(await resumePendingClaims({ ...d.deps, ttlMs: 50 })).toBe(1);
+    expect(d.added.map((s) => s.saleId)).toEqual(["pay-o"]);
+    expect((await getPendingClaims()).map((c) => c.paymentId)).toEqual(["pay-n"]);
+    await dropPendingClaim("pay-n");
+  });
+
+  it("records a claim once when two resumes overlap", async () => {
+    const [id1] = ids("pay-p", 1);
+    await savePendingClaim({ paymentId: "pay-p", requestedAmount: "1.00", topUpIds: [id1], draft });
+    const f = fakeHost({ [id1]: [{ type: "claimed", finalized: true }] });
+    const d = deps(f.host);
+    const [a, b] = await Promise.all([resumePendingClaims(d.deps), resumePendingClaims(d.deps)]);
+    expect(a + b).toBe(1);
+    expect(d.added).toHaveLength(1);
+  });
+
+  it("gives up on a claim nobody could settle for 30 days", async () => {
+    const [id1] = ids("pay-q", 1);
+    await savePendingClaim({ paymentId: "pay-q", requestedAmount: "1.00", topUpIds: [id1], draft });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const f = fakeHost({ [id1]: [{ type: "claimed", finalized: true }] });
+    const d = deps(f.host);
+    await resumePendingClaims({ ...d.deps, now: () => Date.now() + 31 * 24 * 60 * 60 * 1000 });
+    expect(f.asked).toEqual([]);
+    expect(await getPendingClaims()).toEqual([]);
+  });
+
   it("builds the same sale record the in-session path writes", () => {
     const at = new Date("2026-11-13T10:00:00Z");
     const record = coinsSaleRecord(

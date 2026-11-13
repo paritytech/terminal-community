@@ -298,4 +298,27 @@ test.describe("items mode with an empty catalog", () => {
     await payAndComplete(host, frame, req);
     expect((await waitForSale(host, req.id)).items).toEqual([{ name: "Custom Amount", quantity: 1, unitPrice: "4.00" }]);
   });
+
+  test.describe("a basket over the coin limit", () => {
+    test.use({
+      hostOptions: {
+        storage: itemsModeStorage([{ id: "ci-bike", name: "Cargo bike", price: "6000.00", unit: "Each", taxRate: 0 }]),
+      },
+    });
+
+    test("cannot be charged, and says why", async ({ host }) => {
+      const frame = await bootItemsCheckout(host);
+      await tile(frame, "Cargo bike").click();
+      await expect(frame.getByTestId("items-charge")).toBeEnabled();
+      await expect(frame.getByTestId("amount-limit")).toHaveCount(0);
+
+      const since = host.mark();
+      await tile(frame, "Cargo bike").click();
+      await expect(frame.getByTestId("items-charge")).toHaveText(`Charge 12000.00 ${SYM}`);
+      await expect(frame.getByTestId("items-charge")).toBeDisabled();
+      await expect(frame.getByTestId("amount-limit")).toContainText("10,000");
+      expect(host.events.slice(since).filter((e) => e.type === "entropy" || e.type === "statementSubscribe")).toEqual([]);
+    });
+  });
 });
+

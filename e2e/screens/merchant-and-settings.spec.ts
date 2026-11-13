@@ -305,6 +305,13 @@ test.describe("settings", () => {
     await expect(frame.getByText(keyFingerprint("lunch shift key"), { exact: true })).toBeVisible();
     await expect(frame.getByTestId("encryption-key-cleared")).toHaveCount(0);
 
+    // A new key set after a Clear is not undone by the old one.
+    await frame.getByRole("button", { name: "Clear" }).click();
+    await frame.getByPlaceholder("Enter a secret phrase").fill("dinner shift key");
+    await frame.getByRole("button", { name: "Save" }).click();
+    await expect(frame.getByText(keyFingerprint("dinner shift key"), { exact: true })).toBeVisible();
+    await expect(frame.getByTestId("encryption-key-cleared")).toHaveCount(0);
+
     // Clearing for good survives a restart.
     await frame.getByRole("button", { name: "Clear" }).click();
     const after = await restartOn(host, "/settings/encryption");

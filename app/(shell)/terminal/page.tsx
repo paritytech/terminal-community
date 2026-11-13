@@ -908,6 +908,12 @@ function TerminalPageInner() {
     // Charge is the view's one main action, so it takes the pill; "Add" is
     // its alternative in the same slot and keeps the shape at secondary.
     const dock = (
+      <>
+      {cartOverCoinLimit && (
+        <p data-testid="amount-limit" className="text-body-m text-fg-error text-center mt-2">
+          Coin payments go up to {MAX_AMOUNT.toLocaleString("en-US")} {symbol}. Remove items to charge.
+        </p>
+      )}
       <div className="flex items-center gap-3 mt-4">
         <button
           data-testid="cart-button"
@@ -942,6 +948,7 @@ function TerminalPageInner() {
           </Button>
         )}
       </div>
+      </>
     );
 
     return (
@@ -1779,7 +1786,7 @@ function TerminalPageInner() {
                   </div>
                   <div className="flex justify-between pt-4 border-t">
                     <span className="text-fg-secondary">TOTAL</span>
-                    <span className="text-fg-primary font-mono">{finalAmount} {symbol}</span>
+                    <span className="text-fg-primary font-mono">{coinsShortfall?.credited ?? finalAmount} {symbol}</span>
                   </div>
                 </div>
               </div>

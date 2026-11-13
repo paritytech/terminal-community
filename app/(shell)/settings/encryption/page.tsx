@@ -52,6 +52,9 @@ export default function EncryptionSettingsPage() {
     journeyTracker.start("encryption-key-set");
     try {
       setManualPassphrase(passphrase);
+      // A new key replaces whatever Undo would have brought back.
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      setCleared(null);
       refresh();
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -75,7 +78,8 @@ export default function EncryptionSettingsPage() {
   };
 
   const handleUndo = () => {
-    if (!cleared) return;
+    // Never overwrite a key set since the Clear.
+    if (!cleared || getManualPassphrase()) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
     setManualPassphrase(cleared);
     setCleared(null);
