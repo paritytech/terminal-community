@@ -55,6 +55,7 @@ import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { watchForFinalization } from "@/lib/payments/finalization-watcher";
 import { usePaymentMethod } from "@/lib/config/payment-method";
 import {
+  MAX_AMOUNT,
   useCoinagePayment,
   type CoinagePaymentResult,
 } from "@/lib/payments/coinage";
@@ -150,6 +151,10 @@ function TerminalPageInner() {
   // detection mechanism over to the W3S real-time Coinage flow.
   const { method } = usePaymentMethod();
   const useCoins = method === "coins";
+  // A coin cheque carries at most MAX_AMOUNT; refuse a larger sale on the
+  // keypad instead of letting the cheque setup fail behind the QR screen.
+  const coinLimitCents = BigInt(MAX_AMOUNT) * 100n;
+  const amountOverCoinLimit = useCoins && hasAmount && BigInt(amountDigits) > coinLimitCents;
   // Token symbol pulled from on-chain asset metadata (falls back to the
   // bundled default until the chain read resolves).
   const symbol = useAssetSymbol();
@@ -624,6 +629,7 @@ function TerminalPageInner() {
   );
   const cartCount = cart.reduce((n, line) => n + line.quantity, 0);
   const cartTotalDecimal = formatAmountFromPlanck(cartTotalPlanks.toString(), PUSD_DECIMALS);
+  const cartOverCoinLimit = useCoins && cartTotalPlanks > BigInt(MAX_AMOUNT) * 10n ** BigInt(PUSD_DECIMALS);
 
   // Tapping a tile adds one; repeat taps merge into the same line.
   const addCatalogItem = (item: CheckoutItem) => {
@@ -708,7 +714,7 @@ function TerminalPageInner() {
   // whole downstream flow (QR screen, listener reconciliation) is untouched,
   // and the lines are stashed for the itemized receipt.
   const handleChargeCart = () => {
-    if (!account || cartCount === 0) return;
+    if (!account || cartCount === 0 || cartOverCoinLimit) return;
     const cents = (cartTotalPlanks / 10n ** BigInt(PUSD_DECIMALS - 2)).toString();
     setAmountDigits(cents);
     setPendingItems(
@@ -724,7 +730,7 @@ function TerminalPageInner() {
 
   // Keypad → QR: just amount validation, then straight to the payment screen.
   const handleCharge = () => {
-    if (!hasAmount) return;
+    if (!hasAmount || amountOverCoinLimit) return;
     void startPayment(enteredAmount);
   };
 
@@ -927,7 +933,7 @@ function TerminalPageInner() {
           <Button
             data-testid="items-charge"
             onClick={handleChargeCart}
-            disabled={cartCount === 0}
+            disabled={cartCount === 0 || cartOverCoinLimit}
             className="flex-1 h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
           >
             Charge {cartTotalDecimal} {symbol}
@@ -1227,13 +1233,19 @@ function TerminalPageInner() {
                 </div>
               )}
 
+              {amountOverCoinLimit && (
+                <p data-testid="amount-limit" className="text-body-m text-fg-error text-center mt-2">
+                  Coin payments go up to {MAX_AMOUNT.toLocaleString("en-US")} {symbol}.
+                </p>
+              )}
+
               {/* Charge — the view's one main action: the primary pill, full
                   width because it is the bottom-anchored commitment of the
                   screen. Disabled state is the surface, not a fade. */}
               <Button
                 data-testid="btn-charge"
                 onClick={handleCharge}
-                disabled={!hasAmount}
+                disabled={!hasAmount || amountOverCoinLimit}
                 className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold mt-4 disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
               >
                 Charge {enteredAmount} {symbol}

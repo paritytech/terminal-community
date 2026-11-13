@@ -1,6 +1,6 @@
 import { test, expect } from "../host/fixture";
-import { bootTerminal, charge, chargeAndPay, enterAmount, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
-import { coinageLog, navLinks } from "./cheques.helpers";
+import { bootTerminal, charge, chargeAndPay, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
+import { navLinks } from "./cheques.helpers";
 
 /**
  * Leaving a sale before the customer pays, the bottom nav around it, the
@@ -174,15 +174,10 @@ test.describe("amount limit", () => {
     expect(sale.amount).toBe("10000.00");
   });
 
-  // BUG (open): the keypad takes up to 9,999,999.99 but a cheque carries at
-  // most 10000 (MAX_AMOUNT in lib/payments/coinage/deeplink.ts). Charge is
-  // accepted, the connectivity pre-flight runs, then normalizeAmount throws in
-  // the coinage setup (use-coinage-payment.ts): the banner stays on
-  // "Generating Payment" over the generic "Couldn't claim the payment…" copy,
-  // with a "Retry claim" that has nothing to retry. This test states the
-  // correct behaviour, so it fails until the app refuses the amount up front.
+  // A cheque carries at most 10000 (MAX_AMOUNT in lib/payments/coinage/
+  // deeplink.ts). The keypad takes more digits, so an over-limit amount must
+  // be refused there, before any host call, not fail behind the QR screen.
   test("above 10000 the merchant is told the limit before anything is armed", async ({ host }) => {
-    test.fail(true, "BUG: amounts above MAX_AMOUNT (10000) reach coinage setup, which throws; no limit message, a no-op Retry claim");
     const frame = await bootTerminal(host);
     for (const digit of "1200000") await frame.locator(`[data-testid="calc-digit-${digit}"]`).click();
     const since = host.mark();
@@ -199,7 +194,9 @@ test.describe("amount limit", () => {
       ).toBeVisible({ timeout: 10_000 });
     }
     await expect(frame.locator('[data-testid="btn-retry-claim"]')).toHaveCount(0);
-    await expect(frame.locator('[data-testid="waiting-text"]')).not.toHaveText("Generating Payment");
+    // Still on the keypad: no QR screen was opened for an amount a cheque can't carry.
+    await expect(frame.locator('[data-testid="waiting-text"]')).toHaveCount(0);
+    await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
 
     // Nothing reached the host: no pre-flight, no key, no subscription, no claim.
     // (The periodic connectivity check also subscribes to the balance, every
@@ -210,36 +207,5 @@ test.describe("amount limit", () => {
     expect(after("entropy")).toHaveLength(0);
     expect(after("statementSubscribe")).toHaveLength(0);
     expect(after("topUp")).toHaveLength(0);
-  });
-
-  // PIN OF CURRENT BEHAVIOUR (not a statement of what is right — see the
-  // test.fail above). Whatever the screen shows today, an over-limit sale
-  // must at least never arm a cheque or claim anything, and Cancel must get
-  // the merchant back to the keypad.
-  test("[current behaviour] above 10000 no cheque is armed and Cancel returns to the keypad", async ({ host }) => {
-    const log = coinageLog(host);
-    const frame = await bootTerminal(host);
-    await enterAmount(frame, "12000.00");
-    const since = host.mark();
-    const seen = log.mark();
-    await frame.locator('[data-testid="btn-charge"]').click();
-
-    // Barrier: the pre-flight runs, then the coinage setup gives up on the
-    // amount before it derives a key, so nothing below can still be pending.
-    await host.next("balanceSubscribe", undefined, { since, timeout: 15_000 });
-    await log.waitFor(/setup FAILED: amount exceeds max 10000/, seen);
-    const after = (type: "entropy" | "statementSubscribe" | "topUp") => host.events.slice(since).filter((e) => e.type === type);
-    expect(after("entropy")).toHaveLength(0);
-    expect(after("statementSubscribe")).toHaveLength(0);
-    expect(after("topUp")).toHaveLength(0);
-    await expect(frame.locator('[data-testid="qr-code"]')).not.toHaveAttribute("data-qr-value", /.+/);
-
-    await frame.locator('[data-testid="btn-cancel-transaction"]').click();
-    await frame.locator('[data-testid="btn-cancel-modal-confirm"]').click();
-    await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
-    await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("0.00");
-    await expect(navLinks(frame).checkout).toBeVisible();
-    expect(after("topUp")).toHaveLength(0);
-    expect(await storedSales(host)).toHaveLength(0);
   });
 });
