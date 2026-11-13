@@ -78,7 +78,7 @@
     "baseline-browser-mapping": "^2.10.0",
     "esbuild": "0.28.1",
     "eslint": "^9.39.5",
-    "eslint-config-next": "^16.2.11",
+    "eslint-config-next": "^16.4.6",
     "tsx": "^4.19.2",
     "typescript": "^5",
     "vitest": "^4.1.8"
