@@ -130,12 +130,9 @@ test.describe("coins watcher — resume after a restart", () => {
   });
 
   test("a launch asks the host about a forgotten registration only once", async ({ host }) => {
-    // BUG: TopUpWatcherBoot (lib/components/topup-watcher-boot.tsx) re-runs
-    // resumePendingTopUpWatches on every `account` object change — the
-    // persisted account, the host's account, then the account subscription's
-    // first push — and a watch that ended on NotFound is no longer in
-    // `active`, so one launch subscribes to the forgotten id 3 times.
-    test.fail();
+    // Regression: TopUpWatcherBoot used to re-run on every `account` object
+    // change (three per launch), and a watch that ended on NotFound is no
+    // longer in `active`, so one launch asked about the forgotten id 3 times.
     const { topUp } = await confirmingSale(host, "7.10");
     await host.forgetTopUp(topUp.idHex);
     const since = await restart(host, "/history");

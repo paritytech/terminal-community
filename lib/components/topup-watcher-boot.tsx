@@ -15,9 +15,13 @@ import { resumePendingTopUpWatches } from "@/lib/payments/coinage/topup-watcher"
  */
 export function TopUpWatcherBoot() {
   const { account } = useAccount();
+  // Keyed on the address: the account object is replaced several times per
+  // launch (persisted, then from the host, then its first push), and each
+  // replacement would otherwise re-ask the host about every pending sale.
+  const address = account?.address;
 
   useEffect(() => {
-    if (!account || !isInHost()) return;
+    if (!address || !isInHost()) return;
     void awaitHostRuntime()
       .then(() => hostPaymentsAvailable())
       .then((available) => {
@@ -30,7 +34,7 @@ export function TopUpWatcherBoot() {
       .catch((err) => {
         console.warn("[TopUpWatcher] resume failed:", err);
       });
-  }, [account]);
+  }, [address]);
 
   return null;
 }
