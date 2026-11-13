@@ -103,6 +103,7 @@ export default function HistoryPage() {
     items: sale.items,
     subtotal: subtotalOf(sale),
     tip: sale.tip,
+    note: sale.note,
   });
 
   const handleViewReceipt = async (sale: SaleRecord) => {
@@ -123,6 +124,7 @@ export default function HistoryPage() {
       items: sale.items,
       subtotal: subtotalOf(sale),
       tip: sale.tip,
+      note: sale.note,
     });
     if (svg) setSvgReceipt(svg);
   };
@@ -143,6 +145,7 @@ export default function HistoryPage() {
       items: sale.items,
       subtotal: subtotalOf(sale),
       tip: sale.tip,
+      note: sale.note,
     });
   };
 
@@ -458,7 +461,10 @@ export default function HistoryPage() {
                 </p>
               )}
               {groups.map(([groupLabel, sales]) => {
+                // Reverted sales stay listed (struck through) but credited
+                // nothing, so they are left out of the total, as on Home.
                 const groupTotal = sales.reduce((sum, sale) => {
+                  if (saleClaimState(sale) === "reverted") return sum;
                   const value = Number(sale.amount);
                   return sum + (Number.isFinite(value) ? value : 0);
                 }, 0);

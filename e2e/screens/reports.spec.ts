@@ -251,12 +251,11 @@ test.describe("reports", () => {
     await expect(frame.getByText("Report Summary")).toHaveCount(0);
     await expect(frame.getByText("9.90 CASH")).toHaveCount(0);
 
-    // With no key: the encrypted-report error. Settings → Clear cannot be
-    // used for this — it asks through window.confirm, which the sandboxed
-    // product frame ignores (see merchant-and-settings.spec.ts, test.fail) —
-    // so the key is removed from the product's own localStorage, where
-    // lib/crypto/manual-key.ts keeps it.
-    await frame.locator("body").evaluate(() => localStorage.removeItem("t3rminal:manual-encryption-passphrase"));
+    // With no key: the encrypted-report error. Clear the key the way a
+    // merchant would, in Settings → Report Encryption.
+    frame = await restartOn(host, "/settings/encryption");
+    await frame.getByRole("button", { name: "Clear" }).click();
+    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible();
     frame = await restartOn(host, "/daily-reports");
     await frame.locator('[data-testid="report-view-0"]').click();
     await expect(
@@ -266,12 +265,8 @@ test.describe("reports", () => {
   });
 
   test("a report encrypted under another key says the key is wrong", async ({ host }) => {
-    // BUG: lib/hooks/use-bulletin.ts readDailyReport hands the AEAD failure
-    // straight to the UI, so Open report shows the bare crypto error
-    // "invalid tag". The envelope carries the key's fingerprint
-    // (meta.keyFingerprint), so the app can tell the merchant the key does
-    // not match, as it does for a missing key. Remove test.fail once fixed.
-    test.fail();
+    // The envelope carries the key's fingerprint (meta.keyFingerprint), so
+    // the merchant is told the key does not match, not shown a crypto error.
     await bootTerminal(host);
     await seedTodaysSales(host, ["5.55"]);
     let frame = await restartOn(host, "/settings/encryption");
@@ -290,7 +285,9 @@ test.describe("reports", () => {
     await frame.locator('[data-testid="report-view-0"]').click();
     await expect(frame.getByText("Loading report from IPFS...")).toHaveCount(0, { timeout: 30_000 });
     await expect(frame.getByText("Report Summary")).toHaveCount(0);
-    await expect(frame.getByText(/encryption key|decryption key|different key|wrong key/i)).toBeVisible({ timeout: 5_000 });
+    await expect(frame.getByText(/encrypted with a different key/i)).toBeVisible({ timeout: 5_000 });
+    await expect(frame.getByText(keyFingerprint("key one"))).toBeVisible();
+    await expect(frame.getByText(/invalid tag/i)).toHaveCount(0);
   });
 
   test("a denied PreimageSubmit permission fails the save with the host's reason", async ({ host }) => {

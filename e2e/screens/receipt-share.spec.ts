@@ -84,10 +84,7 @@ test.describe("receipt and share after a sale", () => {
   });
 
   test("the receipt note shows on the sale and on its receipt", async ({ host }) => {
-    // BUG: the note field promises "Only visible on your receipt", and the
-    // sale record keeps it, but ReceiptData has no note: the SVG receipt (and
-    // so the PDF and the share-QR envelope) never carries it.
-    test.fail();
+    // The note field promises "Only visible on your receipt".
     const { frame, req } = await completedSale(host, "5.10", "Gift wrap");
     await expect(frame.getByText("Gift wrap")).toBeVisible();
     expect((await waitForSale(host, req.id)).note).toBe("Gift wrap");
@@ -96,6 +93,14 @@ test.describe("receipt and share after a sale", () => {
     const receipt = receiptSvg(frame);
     await expect(receipt).toContainText("5.10");
     await expect(receipt).toContainText("Gift wrap", { timeout: 5_000 });
+
+    // The receipt reopened from History carries it too.
+    await frame.getByRole("button", { name: "Close receipt" }).click();
+    await frame.getByTestId("btn-done").click();
+    await frame.getByRole("link", { name: "History", exact: true }).click();
+    await frame.getByTestId(`history-row-${req.id.slice(-4)}`).click();
+    await frame.getByRole("button", { name: "Review Receipt" }).click();
+    await expect(frame.locator("svg").filter({ hasText: "Gift wrap" }).first()).toBeVisible({ timeout: 5_000 });
   });
 
   test("Download receipt hands a PDF to the host's files bridge", async ({ host }) => {

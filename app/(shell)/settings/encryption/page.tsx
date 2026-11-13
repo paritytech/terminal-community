@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -20,12 +20,23 @@ import {
 } from "@/lib/crypto/manual-key";
 import { journeyTracker, breadcrumb } from "@/lib/telemetry";
 
+const UNDO_WINDOW_MS = 10_000;
+
 export default function EncryptionSettingsPage() {
   const [passphrase, setPassphrase] = useState("");
   const [show, setShow] = useState(false);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Clear acts at once and offers Undo for a while, rather than asking first:
+  // the product runs in a sandboxed host frame where window.confirm() is
+  // ignored (it returns false), and the design system prefers act-then-undo.
+  const [cleared, setCleared] = useState<string | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+  }, []);
 
   const refresh = useCallback(() => {
     setPassphrase(getManualPassphrase() ?? "");
@@ -41,6 +52,9 @@ export default function EncryptionSettingsPage() {
     journeyTracker.start("encryption-key-set");
     try {
       setManualPassphrase(passphrase);
+      // A new key replaces whatever Undo would have brought back.
+      if (undoTimer.current) clearTimeout(undoTimer.current);
+      setCleared(null);
       refresh();
       setSaved(true);
       setTimeout(() => setSaved(false), 1800);
@@ -53,11 +67,22 @@ export default function EncryptionSettingsPage() {
   };
 
   const handleClear = () => {
-    if (!confirm("Remove the encryption key from this device? Reports already on the chain will become unreadable until you set the same key again.")) {
-      return;
-    }
+    const previous = getManualPassphrase();
     breadcrumb("settings", "Encryption key cleared by merchant");
     clearManualPassphrase();
+    refresh();
+    if (!previous) return;
+    setCleared(previous);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    undoTimer.current = setTimeout(() => setCleared(null), UNDO_WINDOW_MS);
+  };
+
+  const handleUndo = () => {
+    // Never overwrite a key set since the Clear.
+    if (!cleared || getManualPassphrase()) return;
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setManualPassphrase(cleared);
+    setCleared(null);
     refresh();
   };
 
@@ -101,6 +126,19 @@ export default function EncryptionSettingsPage() {
               </div>
             ) : (
               <span className="text-neutral-500 text-sm">No key set — reports will upload as plaintext</span>
+            )}
+            {cleared && (
+              <div
+                data-testid="encryption-key-cleared"
+                className="mt-3 flex items-center justify-between gap-3 text-sm"
+              >
+                <span className="text-neutral-300">
+                  Key removed from this device. Reports already on the chain can&apos;t be opened until the same key is set again.
+                </span>
+                <button onClick={handleUndo} className="shrink-0 text-white font-medium underline">
+                  Undo
+                </button>
+              </div>
             )}
           </section>
 

@@ -82,7 +82,7 @@ export function buildCustomerReceiptPrintDocument(data: ReceiptData, qrValue?: s
     // moduleSize kept small so the QR fits within 58mm paper (no default —
     // the host's default renders too wide and clips at the right margin).
     qr: qrValue ? { data: qrValue, label: "Scan QR in W3SPay", moduleSize: 4 } : undefined,
-    footer: ["Thank you"],
+    footer: [...(data.note?.trim() ? [`Note: ${data.note.trim()}`] : []), "Thank you"],
   };
 }
 

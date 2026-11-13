@@ -288,22 +288,33 @@ test.describe("settings", () => {
     await expect(frame.getByRole("button", { name: "Clear" })).toBeVisible();
   });
 
-  test("Report Encryption: Clear removes the key from this device", async ({ host }) => {
-    // BUG: app/(shell)/settings/encryption/page.tsx asks through
-    // window.confirm(). The product runs in a sandboxed host frame without
-    // allow-modals, where Chrome ignores the call ("Ignored call to
-    // 'confirm()'. The document is sandboxed…") and it returns false, so
-    // Clear never clears. The confirmation needs to be in-app. The dialog
-    // handler below accepts it should a browser ever show it.
-    test.fail();
+  test("Report Encryption: Clear removes the key from this device, and Undo brings it back", async ({ host }) => {
+    // The product runs in a sandboxed host frame, where window.confirm() is
+    // ignored, so Clear acts at once and offers Undo instead of asking.
     await bootTerminal(host);
     const frame = await restartOn(host, "/settings/encryption");
     await frame.getByPlaceholder("Enter a secret phrase").fill("lunch shift key");
     await frame.getByRole("button", { name: "Save" }).click();
     await expect(frame.getByText(keyFingerprint("lunch shift key"), { exact: true })).toBeVisible();
 
-    host.page.on("dialog", (d) => void d.accept());
     await frame.getByRole("button", { name: "Clear" }).click();
     await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible({ timeout: 5_000 });
+    await expect(frame.getByTestId("encryption-key-cleared")).toContainText("can't be opened");
+
+    await frame.getByRole("button", { name: "Undo" }).click();
+    await expect(frame.getByText(keyFingerprint("lunch shift key"), { exact: true })).toBeVisible();
+    await expect(frame.getByTestId("encryption-key-cleared")).toHaveCount(0);
+
+    // A new key set after a Clear is not undone by the old one.
+    await frame.getByRole("button", { name: "Clear" }).click();
+    await frame.getByPlaceholder("Enter a secret phrase").fill("dinner shift key");
+    await frame.getByRole("button", { name: "Save" }).click();
+    await expect(frame.getByText(keyFingerprint("dinner shift key"), { exact: true })).toBeVisible();
+    await expect(frame.getByTestId("encryption-key-cleared")).toHaveCount(0);
+
+    // Clearing for good survives a restart.
+    await frame.getByRole("button", { name: "Clear" }).click();
+    const after = await restartOn(host, "/settings/encryption");
+    await expect(after.getByText("No key set — reports will upload as plaintext")).toBeVisible();
   });
 });

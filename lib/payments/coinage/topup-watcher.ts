@@ -95,6 +95,11 @@ const defaultDeps = (): TopUpWatcherDeps => ({
   getSalesAwaitingClaimFinality,
 });
 
+/** This launch's top-up status host, shared with the pending-claim resume. */
+export function claimStatusHost(): Pick<ClaimHost, "subscribeTopUpStatus"> {
+  return defaultDeps().host;
+}
+
 // Keyed by saleId — one watch per sale, however many callers ask.
 const active = new Map<string, AbortController>();
 

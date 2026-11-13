@@ -39,6 +39,7 @@ import {
   topUpIdToHex,
   type TopUpStatusEvent,
 } from "./claim";
+import { markClaimInSession } from "./pending-claims";
 
 type ChequePayload = ReturnType<typeof decryptStatementData>["payload"];
 
@@ -129,6 +130,13 @@ export interface UseCoinagePaymentOptions {
   /** Decimal amount from the calculator (normalized internally). */
   amount: string;
   onPaid: (result: CoinagePaymentResult) => void;
+  /**
+   * Called, and awaited, right before each registration with the host, so the
+   * caller can persist the claim (see ./pending-claims.ts): from that moment
+   * the host may credit the coins even if this page goes away. `topUpIds` are
+   * the registrations that may hold them (hex, no 0x).
+   */
+  onClaimStarting?: (claim: { paymentId: string; requestedAmount: string; topUpIds: string[] }) => Promise<void> | void;
 }
 
 export interface UseCoinagePayment {
@@ -161,6 +169,8 @@ export function useCoinagePayment(
     opts?.onPaid,
   );
   onPaidRef.current = opts?.onPaid;
+  const onClaimStartingRef = useRef<UseCoinagePaymentOptions["onClaimStarting"]>(opts?.onClaimStarting);
+  onClaimStartingRef.current = opts?.onClaimStarting;
   const retryRef = useRef<(() => void) | null>(null);
 
   const [status, setStatus] = useState<CoinageStatus>("idle");
@@ -216,6 +226,7 @@ export function useCoinagePayment(
         const expectedAmount = normalizeAmount(amount);
         const { privateKey, publicKey } = await generateEphemeralKeypair();
         const id = generatePaymentId();
+        markClaimInSession(id);
         const topic = deriveTopic(id);
         if (cancelled) return;
         const env = detectHostEnvironment();
@@ -288,6 +299,17 @@ export function useCoinagePayment(
           }
 
           try {
+            // A retry can end up following the previous registration (the host
+            // answers SourceBusy while it is live), so keep both.
+            const topUpIds = [attempt - 1, attempt].filter((n) => n >= 1).map((n) => topUpIdToHex(deriveTopUpId(id, n)));
+            try {
+              await onClaimStartingRef.current?.({ paymentId: id, requestedAmount: claimed.amount, topUpIds });
+            } catch (persistError) {
+              // Not fatal: the claim goes ahead, it just would not survive a restart.
+              captureWarning("could not persist the pending claim", { paymentId: id, detail: describeError(persistError) });
+            }
+            if (cancelled) return;
+
             const outcome = await claimCoins({
               host: claimHost,
               amountPlanck: requestedPlanck,

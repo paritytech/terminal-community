@@ -125,12 +125,9 @@ test.describe("coins claim outcomes", () => {
     expect(host.all("topUpStatusUnsubscribe").filter((e) => e.idHex === topUp.idHex)).toHaveLength(1);
   });
 
-  // BUG(app): on a partial claim the completed screen's big figure is the
-  // requested amount (terminal/page.tsx renders `finalAmount`, the charge),
-  // not what was credited; only the coins-shortfall line below carries the
-  // credited 5.00. The merchant's headline number should be the money in.
+  // The merchant's headline number is the money in: the credited part, with
+  // the shortfall line naming what was asked for.
   test("partial claim at claim time: the completed screen's amount is the credited one", async ({ host }) => {
-    test.fail();
     const frame = await bootTerminal(host);
     const { topUp } = await chargeAndPay(host, frame, "12.50");
     await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: planck("5.00").toString() });

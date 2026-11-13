@@ -130,12 +130,9 @@ test.describe("coins watcher — resume after a restart", () => {
   });
 
   test("a launch asks the host about a forgotten registration only once", async ({ host }) => {
-    // BUG: TopUpWatcherBoot (lib/components/topup-watcher-boot.tsx) re-runs
-    // resumePendingTopUpWatches on every `account` object change — the
-    // persisted account, the host's account, then the account subscription's
-    // first push — and a watch that ended on NotFound is no longer in
-    // `active`, so one launch subscribes to the forgotten id 3 times.
-    test.fail();
+    // Regression: TopUpWatcherBoot used to re-run on every `account` object
+    // change (three per launch), and a watch that ended on NotFound is no
+    // longer in `active`, so one launch asked about the forgotten id 3 times.
     const { topUp } = await confirmingSale(host, "7.10");
     await host.forgetTopUp(topUp.idHex);
     const since = await restart(host, "/history");
@@ -199,23 +196,76 @@ test.describe("coins watcher — resume after a restart", () => {
     });
   });
 
-  test("a reload mid-claim still records the sale once the host claims it", async ({ host }) => {
-    // KNOWN GAP: the claim lives only in memory (keys, paymentId, pending
-    // claim in use-coinage-payment.ts). A reload after the host registered
-    // the top-up but before the first `claimed` loses the sale: the host
-    // credits the coins and no SaleRecord is ever written, and nothing on
-    // the next launch follows the registration.
-    test.fail();
-    await host.setTopUpScript("manual");
-    const frame = await bootTerminal(host);
-    const { req, topUp } = await chargeAndPay(host, frame, "6.40");
-    await host.emitTopUpStatus(topUp.idHex, { tag: "Detecting" });
-    await expect(frame.locator('[data-testid="coins-claiming"]')).toContainText("Waiting for the coins to reach the chain");
+  // The claim itself lives in memory, so the terminal persists a pending
+  // claim before registering (lib/payments/coinage/pending-claims.ts) and the
+  // next launch follows it: the host keeps claiming across the restart.
+  test.describe("a restart mid-claim", () => {
+    test.use({ hostOptions: { topUpScript: "manual" } });
 
-    await restart(host, "/terminal");
-    await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: true });
-    // Correct behaviour: the claim the host completed shows up as a sale.
-    await waitForSale(host, req.id, (s) => !!s.finalizedAt, 20_000);
+    /** Charge, pay, let the host start claiming, then restart the app. */
+    async function claimThenRestart(host: T3Host, amount: string) {
+      const frame = await bootTerminal(host);
+      const { req, topUp } = await chargeAndPay(host, frame, amount);
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Detecting" });
+      await expect(frame.locator('[data-testid="coins-claiming"]')).toContainText("Waiting for the coins to reach the chain");
+      // Persisted before the registration went out.
+      const pending = (await host.getStorage<Array<{ paymentId: string; topUpIds: string[] }>>("pendingClaims")) ?? [];
+      expect(pending.map((c) => c.paymentId)).toEqual([req.id]);
+      expect(pending[0].topUpIds).toEqual([topUp.idHex.slice(2)]);
+      const since = host.mark();
+      await restart(host, "/terminal");
+      // The next launch follows the same registration.
+      await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex, { since, timeout: 30_000 });
+      return { req, topUp };
+    }
+
+    const pendingIds = async (host: T3Host) =>
+      ((await host.getStorage<Array<{ paymentId: string }>>("pendingClaims")) ?? []).map((c) => c.paymentId);
+
+    test("records the sale the host claimed, final at once", async ({ host }) => {
+      const { req, topUp } = await claimThenRestart(host, "6.40");
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: true });
+      const sale = await waitForSale(host, req.id, (s) => !!s.finalizedAt, 20_000);
+      expect(sale).toMatchObject({ amount: "6.40", topUpId: topUp.idHex.slice(2), customerAddress: "anonymous" });
+      await expect.poll(() => pendingIds(host)).toEqual([]);
+    });
+
+    test("records a claim in a best block as confirming, and the watcher finalizes it", async ({ host }) => {
+      const { req, topUp } = await claimThenRestart(host, "2.20");
+      const since = host.mark();
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
+      const sale = await waitForSale(host, req.id);
+      expect(sale.finalizedAt).toBeUndefined();
+      // The finality watcher takes over the same registration.
+      await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex, { since, timeout: 15_000 });
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: true });
+      await waitForSale(host, req.id, (s) => !!s.finalizedAt);
+    });
+
+    test("records a partial claim at the credited amount", async ({ host }) => {
+      const { req, topUp } = await claimThenRestart(host, "12.50");
+      await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: "5000000" });
+      const sale = await waitForSale(host, req.id, (s) => !!s.finalizedAt);
+      expect(sale).toMatchObject({ amount: "5.00", requestedAmount: "12.50" });
+    });
+
+    test("forgets a claim that credited nothing", async ({ host }) => {
+      await claimThenRestart(host, "1.10");
+      const [{ idHex }] = await host.getTopUps();
+      await host.emitTopUpStatus(idHex, { tag: "NotClaimed" });
+      await expect.poll(() => pendingIds(host)).toEqual([]);
+      expect(await storedSales(host)).toEqual([]);
+    });
+  });
+
+  test("a sale recorded in session leaves no pending claim behind", async ({ host }) => {
+    const frame = await bootTerminal(host);
+    const { req } = await chargeAndPay(host, frame, "3.30");
+    await expect(frame.locator('[data-testid="payment-completed"]')).toBeVisible();
+    await waitForSale(host, req.id);
+    await expect
+      .poll(async () => ((await host.getStorage<Array<{ paymentId: string }>>("pendingClaims")) ?? []).length)
+      .toBe(0);
   });
 });
 

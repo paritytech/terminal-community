@@ -55,12 +55,19 @@ import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { watchForFinalization } from "@/lib/payments/finalization-watcher";
 import { usePaymentMethod } from "@/lib/config/payment-method";
 import {
+  MAX_AMOUNT,
   useCoinagePayment,
   type CoinagePaymentResult,
 } from "@/lib/payments/coinage";
 import { isHostPrinterAvailable, printHostDocument } from "@/lib/host/printing";
 import { publishNfcPaymentDeeplink, stopNfcEmitting } from "@/lib/host/nfc";
 import { watchTopUpFinality } from "@/lib/payments/coinage/topup-watcher";
+import {
+  coinsSaleRecord,
+  dropPendingClaim,
+  savePendingClaim,
+  type CoinsSaleDraft,
+} from "@/lib/payments/coinage/pending-claims";
 import { buildCustomerReceiptPrintDocument } from "@/lib/receipts/thermal-print";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
@@ -150,6 +157,10 @@ function TerminalPageInner() {
   // detection mechanism over to the W3S real-time Coinage flow.
   const { method } = usePaymentMethod();
   const useCoins = method === "coins";
+  // A coin cheque carries at most MAX_AMOUNT; refuse a larger sale on the
+  // keypad instead of letting the cheque setup fail behind the QR screen.
+  const coinLimitCents = BigInt(MAX_AMOUNT) * 100n;
+  const amountOverCoinLimit = useCoins && hasAmount && BigInt(amountDigits) > coinLimitCents;
   // Token symbol pulled from on-chain asset metadata (falls back to the
   // bundled default until the chain read resolves).
   const symbol = useAssetSymbol();
@@ -399,6 +410,7 @@ function TerminalPageInner() {
         items: receiptItems.length > 0 ? receiptItems : undefined,
         subtotal: subtotalDecimal,
         tip: tipDecimal,
+        note: note.trim() || undefined,
       });
 
       if (svg) {
@@ -431,6 +443,25 @@ function TerminalPageInner() {
   // customer — and, unless the host already reported it final, WITHOUT
   // `finalizedAt`: a reorg can still shrink or undo the claim, so the
   // background watcher follows the host's top-up id to its last word.
+  // What a coins sale records besides the claim's outcome. Persisted with the
+  // pending claim before registration, so a restart can still record it.
+  const coinsSaleDraft = (): CoinsSaleDraft => {
+    const merchant = receivingAddress ? normalizeToAssetHubAddress(receivingAddress) : "";
+    const items: ReceiptItem[] = pendingItems.map((line) => ({
+      name: line.name,
+      quantity: line.quantity,
+      unitPrice: formatAmountFromPlanck(line.pricePlanks, PUSD_DECIMALS),
+    }));
+    return {
+      asset: getAssetSymbol(),
+      assetId: ASSET_ID_STR,
+      merchantAddress: merchant,
+      items: items.length > 0 ? items : undefined,
+      tip: tipDecimal,
+      note: note.trim() || undefined,
+    };
+  };
+
   const handleCoinsPaid = async (result: CoinagePaymentResult) => {
     journeyTracker.milestone("terminal-payment", "payment-detected");
     journeyTracker.addAttributes("terminal-payment", {
@@ -467,33 +498,9 @@ function TerminalPageInner() {
     }));
 
     try {
-      await addSale({
-        saleId: result.paymentId,
-        amount: result.amount,
-        amountPlanck,
-        asset: getAssetSymbol(),
-        assetId: ASSET_ID_STR,
-        merchantAddress: normalizedMerchant,
-        customerAddress: "anonymous",
-        merchantAddressNormalized: normalizedMerchant,
-        customerAddressNormalized: "anonymous",
-        transactionHash: result.paymentId,
-        blockNumber: 0,
-        blockHash: result.paymentId,
-        timestamp: receivedAt,
-        // Final only when the host said so (or the claim settled partially,
-        // which is final). Otherwise the watcher stamps it later.
-        finalizedAt: result.finalized ? new Date() : undefined,
-        topUpId: result.topUpId,
-        requestedAmount: result.partial ? result.requestedAmount : undefined,
-        requestedAmountPlanck: result.partial
-          ? amountToPlanck(result.requestedAmount, PUSD_DECIMALS).toString()
-          : undefined,
-        type: "incoming",
-        items: receiptItems.length > 0 ? receiptItems : undefined,
-        tip: tipDecimal,
-        note: note.trim() || undefined,
-      });
+      await addSale(coinsSaleRecord(coinsSaleDraft(), result, receivedAt));
+      // Recorded: the pending claim kept for a restart has done its job.
+      await dropPendingClaim(result.paymentId);
       journeyTracker.milestone("terminal-payment", "sale-saved");
       if (!result.finalized) {
         // Fire-and-forget: survives this page unmounting, and is re-armed on
@@ -521,6 +528,7 @@ function TerminalPageInner() {
       items: receiptItems.length > 0 ? receiptItems : undefined,
       subtotal: subtotalDecimal,
       tip: tipDecimal,
+      note: note.trim() || undefined,
     });
     if (svg) {
       setSvgReceipt(svg);
@@ -549,6 +557,7 @@ function TerminalPageInner() {
           onPaid: (result) => {
             void handleCoinsPaid(result);
           },
+          onClaimStarting: (claim) => savePendingClaim({ ...claim, draft: coinsSaleDraft() }),
         }
       : null,
   );
@@ -622,6 +631,7 @@ function TerminalPageInner() {
   );
   const cartCount = cart.reduce((n, line) => n + line.quantity, 0);
   const cartTotalDecimal = formatAmountFromPlanck(cartTotalPlanks.toString(), PUSD_DECIMALS);
+  const cartOverCoinLimit = useCoins && cartTotalPlanks > BigInt(MAX_AMOUNT) * 10n ** BigInt(PUSD_DECIMALS);
 
   // Tapping a tile adds one; repeat taps merge into the same line.
   const addCatalogItem = (item: CheckoutItem) => {
@@ -706,7 +716,7 @@ function TerminalPageInner() {
   // whole downstream flow (QR screen, listener reconciliation) is untouched,
   // and the lines are stashed for the itemized receipt.
   const handleChargeCart = () => {
-    if (!account || cartCount === 0) return;
+    if (!account || cartCount === 0 || cartOverCoinLimit) return;
     const cents = (cartTotalPlanks / 10n ** BigInt(PUSD_DECIMALS - 2)).toString();
     setAmountDigits(cents);
     setPendingItems(
@@ -722,7 +732,7 @@ function TerminalPageInner() {
 
   // Keypad → QR: just amount validation, then straight to the payment screen.
   const handleCharge = () => {
-    if (!hasAmount) return;
+    if (!hasAmount || amountOverCoinLimit) return;
     void startPayment(enteredAmount);
   };
 
@@ -790,6 +800,7 @@ function TerminalPageInner() {
       items: receiptItems.length > 0 ? receiptItems : undefined,
       subtotal: subtotalDecimal,
       tip: tipDecimal,
+      note: note.trim() || undefined,
     });
   };
 
@@ -825,6 +836,7 @@ function TerminalPageInner() {
         items: receiptItems.length > 0 ? receiptItems : undefined,
         subtotal: subtotalDecimal,
         tip: tipDecimal,
+        note: note.trim() || undefined,
       };
       await printHostDocument(
         buildCustomerReceiptPrintDocument(receiptData, buildReceiptQrValue(receiptData)),
@@ -896,6 +908,12 @@ function TerminalPageInner() {
     // Charge is the view's one main action, so it takes the pill; "Add" is
     // its alternative in the same slot and keeps the shape at secondary.
     const dock = (
+      <>
+      {cartOverCoinLimit && (
+        <p data-testid="amount-limit" className="text-body-m text-fg-error text-center mt-2">
+          Coin payments go up to {MAX_AMOUNT.toLocaleString("en-US")} {symbol}. Remove items to charge.
+        </p>
+      )}
       <div className="flex items-center gap-3 mt-4">
         <button
           data-testid="cart-button"
@@ -923,13 +941,14 @@ function TerminalPageInner() {
           <Button
             data-testid="items-charge"
             onClick={handleChargeCart}
-            disabled={cartCount === 0}
+            disabled={cartCount === 0 || cartOverCoinLimit}
             className="flex-1 h-auto rounded-full px-6 py-3.5 text-label-l font-semibold disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
           >
             Charge {cartTotalDecimal} {symbol}
           </Button>
         )}
       </div>
+      </>
     );
 
     return (
@@ -1223,13 +1242,19 @@ function TerminalPageInner() {
                 </div>
               )}
 
+              {amountOverCoinLimit && (
+                <p data-testid="amount-limit" className="text-body-m text-fg-error text-center mt-2">
+                  Coin payments go up to {MAX_AMOUNT.toLocaleString("en-US")} {symbol}.
+                </p>
+              )}
+
               {/* Charge — the view's one main action: the primary pill, full
                   width because it is the bottom-anchored commitment of the
                   screen. Disabled state is the surface, not a fade. */}
               <Button
                 data-testid="btn-charge"
                 onClick={handleCharge}
-                disabled={!hasAmount}
+                disabled={!hasAmount || amountOverCoinLimit}
                 className="w-full h-auto rounded-full px-6 py-3.5 text-label-l font-semibold mt-4 disabled:bg-action-disabled disabled:text-fg-disabled disabled:opacity-100"
               >
                 Charge {enteredAmount} {symbol}
@@ -1503,7 +1528,9 @@ function TerminalPageInner() {
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
               <span data-testid="completed-amount" className="text-display-xl font-mono text-fg-primary break-all">
-                {finalAmount}
+                {/* What arrived: on a partial claim that is the credited part
+                    (the shortfall line below names the requested amount). */}
+                {coinsShortfall?.credited ?? finalAmount}
               </span>
               <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
             </div>
@@ -1759,7 +1786,7 @@ function TerminalPageInner() {
                   </div>
                   <div className="flex justify-between pt-4 border-t">
                     <span className="text-fg-secondary">TOTAL</span>
-                    <span className="text-fg-primary font-mono">{finalAmount} {symbol}</span>
+                    <span className="text-fg-primary font-mono">{coinsShortfall?.credited ?? finalAmount} {symbol}</span>
                   </div>
                 </div>
               </div>
