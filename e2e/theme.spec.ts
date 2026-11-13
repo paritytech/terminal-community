@@ -29,6 +29,35 @@ test.describe('Theme follows the host', () => {
     expect(stored).toBe('berlin-day');
   });
 
+  test('a named host theme selects the design-system theme of the same name', async ({ testHost }) => {
+    const frame = await waitForAppReady(testHost);
+    await selectMerchantMode(frame);
+    const html = frame.locator('html');
+
+    // The ids the Polkadot app sends on Android and iOS.
+    const named = (value: string, variant: 'Light' | 'Dark') =>
+      testHost.setTheme({ name: { tag: 'Custom', value }, variant });
+
+    await named('tokyo', 'Light');
+    await expect(html).toHaveAttribute('data-theme', 'tokyo');
+
+    await named('lisbon', 'Light');
+    await expect(html).toHaveAttribute('data-theme', 'lisbon');
+
+    await named('malta', 'Light');
+    await expect(html).toHaveAttribute('data-theme', 'malta');
+
+    await named('berlinNight', 'Dark');
+    await expect(html).toHaveAttribute('data-theme', 'berlin-night');
+
+    await named('berlinDay', 'Light');
+    await expect(html).toHaveAttribute('data-theme', 'berlin-day');
+
+    // A theme the terminal doesn't have falls back to the light/dark pair.
+    await named('oslo', 'Dark');
+    await expect(html).toHaveAttribute('data-theme', 'berlin-night');
+  });
+
   test('a theme picked in Settings overrides the host until set back to follow', async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await selectMerchantMode(frame);

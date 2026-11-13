@@ -6,12 +6,16 @@
  *
  *   { name: Default | Custom(<host theme id>), variant: "Light" | "Dark" }
  *
- * We map that onto the design system's themes (theme/theme.ts). Only the
- * `variant` has a counterpart today — Berlin Day / Berlin Night are the
- * light/dark pair, and the tonal themes (Lisbon, Malta, Tokyo) are light-only
- * with no host name agreed for them — so a `Custom` name is honoured by its
- * variant alone. Revisit `hostThemeToChoice` once design maps host theme ids
- * to ours.
+ * We map that onto the design system's themes (theme/theme.ts). The Polkadot
+ * app ships the same five themes we do and names them in `Custom`, with the
+ * same ids on Android (the theme enum, first letter lowered) and iOS
+ * (`Theme.id` in polkadot-app-design-system-ios): `berlinDay`, `berlinNight`,
+ * `lisbon`, `malta`, `tokyo`. A known id selects our theme of the same name.
+ *
+ * Anything else falls back to the variant — Berlin Day / Berlin Night are the
+ * light/dark pair: `Default` (a host without named themes), an id we don't
+ * have yet, or a known id whose variant disagrees with ours (a dark Tokyo
+ * would otherwise render light while the host is dark).
  *
  * Outside a host container nothing subscribes and the bundle's default
  * applies: no `data-theme`, i.e. Berlin Day following the OS to Berlin Night.
@@ -20,7 +24,7 @@
 "use client"
 
 import type { ThemeMode } from "@novasamatech/host-api-wrapper"
-import type { ThemeChoice } from "@/theme/theme"
+import { DARK_THEMES, type Theme } from "@/theme/theme"
 import { isInHost, onTruApi } from "./detect"
 
 export type HostTheme = ThemeMode
@@ -48,9 +52,23 @@ async function subscribeThemeForActiveCodec(
   return createThemeProvider(sandboxTransport).subscribeTheme(onTheme)
 }
 
+/** Host theme ids (`ThemeName::Custom`) and the design-system theme each one is. */
+const HOST_THEME_IDS: ReadonlyMap<string, Theme> = new Map([
+  ["berlinDay", "berlin-day"],
+  ["berlinNight", "berlin-night"],
+  ["lisbon", "lisbon"],
+  ["malta", "malta"],
+  ["tokyo", "tokyo"],
+])
+
 /** The design-system theme that matches what the host is showing. */
-export function hostThemeToChoice(theme: HostTheme): ThemeChoice {
-  return theme.variant === "Dark" ? "berlin-night" : "berlin-day"
+export function hostThemeToChoice(theme: HostTheme): Theme {
+  const dark = theme.variant === "Dark"
+  if (theme.name.tag === "Custom") {
+    const named = HOST_THEME_IDS.get(theme.name.value)
+    if (named && DARK_THEMES.includes(named) === dark) return named
+  }
+  return dark ? "berlin-night" : "berlin-day"
 }
 
 /**
