@@ -24,6 +24,8 @@ export interface ReceiptData {
   subtotal?: string;
   /** Tip amount added on top of the subtotal. */
   tip?: string;
+  /** The merchant's note for this sale; printed on the receipt. */
+  note?: string;
   /** When the sale happened. Wins over the saleId's ULID time, which a coins
    *  sale (a hex payment id) does not have. */
   timestamp?: Date;
@@ -88,6 +90,7 @@ export function useReceiptGenerator() {
         items: data.items,
         subtotal: data.subtotal,
         tip: data.tip,
+        note: data.note,
       });
 
       setIsGenerating(false);
@@ -115,6 +118,7 @@ export function useReceiptGenerator() {
           items: data.items,
           subtotal: data.subtotal,
           tip: data.tip,
+          note: data.note,
         });
 
         setIsGenerating(false);
@@ -186,6 +190,9 @@ export function useReceiptGenerator() {
         terminalId: data.terminalId ?? adminPayload?.terminalId,
         merchantId: data.merchantId ?? adminPayload?.merchantId,
         items: data.items,
+        tip: data.tip,
+        subtotal: data.subtotal,
+        note: data.note,
       });
 
       setIsGenerating(false);

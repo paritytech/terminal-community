@@ -399,6 +399,7 @@ function TerminalPageInner() {
         items: receiptItems.length > 0 ? receiptItems : undefined,
         subtotal: subtotalDecimal,
         tip: tipDecimal,
+        note: note.trim() || undefined,
       });
 
       if (svg) {
@@ -521,6 +522,7 @@ function TerminalPageInner() {
       items: receiptItems.length > 0 ? receiptItems : undefined,
       subtotal: subtotalDecimal,
       tip: tipDecimal,
+      note: note.trim() || undefined,
     });
     if (svg) {
       setSvgReceipt(svg);
@@ -790,6 +792,7 @@ function TerminalPageInner() {
       items: receiptItems.length > 0 ? receiptItems : undefined,
       subtotal: subtotalDecimal,
       tip: tipDecimal,
+      note: note.trim() || undefined,
     });
   };
 
@@ -825,6 +828,7 @@ function TerminalPageInner() {
         items: receiptItems.length > 0 ? receiptItems : undefined,
         subtotal: subtotalDecimal,
         tip: tipDecimal,
+        note: note.trim() || undefined,
       };
       await printHostDocument(
         buildCustomerReceiptPrintDocument(receiptData, buildReceiptQrValue(receiptData)),

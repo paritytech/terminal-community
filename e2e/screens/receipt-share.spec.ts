@@ -84,10 +84,7 @@ test.describe("receipt and share after a sale", () => {
   });
 
   test("the receipt note shows on the sale and on its receipt", async ({ host }) => {
-    // BUG: the note field promises "Only visible on your receipt", and the
-    // sale record keeps it, but ReceiptData has no note: the SVG receipt (and
-    // so the PDF and the share-QR envelope) never carries it.
-    test.fail();
+    // The note field promises "Only visible on your receipt".
     const { frame, req } = await completedSale(host, "5.10", "Gift wrap");
     await expect(frame.getByText("Gift wrap")).toBeVisible();
     expect((await waitForSale(host, req.id)).note).toBe("Gift wrap");

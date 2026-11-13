@@ -43,6 +43,8 @@ export interface ReceiptData {
   subtotal?: string
   /** Tip amount added on top of the subtotal. Omitted/0 → no tip line. */
   tip?: string
+  /** The merchant's note for this sale ("Only visible on your receipt"). */
+  note?: string
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -147,6 +149,13 @@ function buildRows(data: ReceiptData, business: BusinessProfile, ts: Date): Rend
   // Payment record totals use the actual transaction asset.
   rows.push({ type: "space", height: 6 })
   rows.push({ type: "split", left: `Paid ${asset}`, right: formatMoney(data.amount) })
+
+  const note = data.note?.trim()
+  if (note) {
+    rows.push({ type: "space", height: 6 })
+    rows.push({ type: "rule" })
+    rows.push({ type: "text", value: `Note: ${note}`, align: "left", size: 11 })
+  }
 
   return rows
 }
