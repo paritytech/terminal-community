@@ -1503,7 +1503,9 @@ function TerminalPageInner() {
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
               <span data-testid="completed-amount" className="text-display-xl font-mono text-fg-primary break-all">
-                {finalAmount}
+                {/* What arrived: on a partial claim that is the credited part
+                    (the shortfall line below names the requested amount). */}
+                {coinsShortfall?.credited ?? finalAmount}
               </span>
               <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
             </div>
