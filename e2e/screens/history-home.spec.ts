@@ -164,9 +164,11 @@ test.describe("History", () => {
     await expect(row(frame, "0a13")).toHaveCount(0);
     const today = frame.locator("section").filter({ has: frame.getByRole("heading", { name: "TODAY", exact: true }) });
     const yesterday = frame.locator("section").filter({ has: frame.getByRole("heading", { name: "YESTERDAY", exact: true }) });
-    await expect(today).toContainText("1.00 CASH");
     await expect(today.locator('[data-testid="history-row-0a11"]')).toBeVisible();
     await expect(yesterday.locator('[data-testid="history-row-0a12"]')).toBeVisible();
+    // Each day carries its own total — the other merchant's 3.00 is not in it.
+    await expect(today.getByTestId("history-group-total")).toHaveText("1.00 CASH");
+    await expect(yesterday.getByTestId("history-group-total")).toHaveText("2.00 CASH");
     // Newest first.
     await expect(frame.locator('[data-testid^="history-row-"][data-claim-state]').first()).toHaveAttribute(
       "data-testid",
@@ -175,16 +177,18 @@ test.describe("History", () => {
   });
 
   // BUG(app): History's day total sums every sale, including reverted ones
-  // (history/page.tsx group reduce), while Today's Income and Sales exclude
-  // them and SaleRecord.revertedAt documents "excluded from totals".
+  // (history/page.tsx group reduce: TODAY shows 23.50 CASH here), while
+  // Today's Income and Sales exclude them and SaleRecord.revertedAt documents
+  // "excluded from totals". The selector is proven by the passing
+  // "grouped by day" test above, so only the wrong value fails here.
   test("a day's total leaves reverted sales out", async ({ host }) => {
     test.fail();
     await seedSalesAndOpen(host, FOUR_STATES, "/history");
     const frame = host.productFrame();
-    const today = frame.locator("section").filter({ has: frame.getByRole("heading", { name: "TODAY", exact: true }) });
-    await expect(row(frame, "0d04")).toBeVisible({ timeout: 60_000 });
+    await expect(frame.locator('[data-testid^="history-row-"][data-claim-state]')).toHaveCount(4, { timeout: 60_000 });
+    const totals = frame.getByTestId("history-group-total");
     // 10.00 + 2.50 + 4.00 (credited) — the reverted 7.00 is not money in.
-    await expect(today.locator("div").first()).toHaveText("TODAY16.50 CASH", { timeout: 5_000 });
+    await expect(totals).toHaveText(["16.50 CASH"], { timeout: 5_000 });
   });
 
   test("an empty history says so", async ({ host }) => {

@@ -2,7 +2,7 @@ import { test, expect } from "../host/fixture";
 import type { T3Host } from "../host/fixture";
 import { bootTerminal, chargeAndPay, storedSales, topUpIdHex, waitForSale } from "../host/flows";
 import type { Hex } from "../host/protocol";
-import { captureConsole, topUpSubscriberCount } from "./resilience.helpers";
+import { captureConsole } from "./resilience.helpers";
 
 /**
  * The host dropping a top-up status subscription. During the claim the
@@ -18,7 +18,7 @@ const DROP = { Unknown: "test: status stream dropped" } as const;
 /** Wait for the next live status subscription on `idHex` after `since`, then drop it. */
 async function dropNextSubscription(host: T3Host, idHex: Hex, since: number) {
   await host.next("topUpStatusSubscribe", (e) => e.idHex === idHex, { since, timeout: 20_000 });
-  await expect.poll(() => topUpSubscriberCount(host, idHex)).toBe(1);
+  await expect.poll(() => host.topUpSubscriberCount(idHex)).toBe(1);
   const at = host.mark();
   await host.interruptTopUpStatus(idHex, DROP);
   return at;

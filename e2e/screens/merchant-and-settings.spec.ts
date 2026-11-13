@@ -1,7 +1,15 @@
 import type { FrameLocator } from "@playwright/test";
 import { test, expect } from "../host/fixture";
 import { bootTerminal, chargeAndPay } from "../host/flows";
-import { MERCHANT_PROFILE, keyFingerprint, productPath, restartOn, setting, waitForBootWrites } from "./settings.helpers";
+import {
+  MERCHANT_PROFILE,
+  hostStorageHits,
+  keyFingerprint,
+  productPath,
+  restartOn,
+  setting,
+  waitForBootWrites,
+} from "./settings.helpers";
 
 /**
  * Merchant onboarding and the Settings screens, on the Terminal test host.
@@ -11,6 +19,10 @@ import { MERCHANT_PROFILE, keyFingerprint, productPath, restartOn, setting, wait
 
 /** The onboarding/receipt fields carry their label as the placeholder. */
 const field = (frame: FrameLocator, label: string) => frame.getByPlaceholder(label, { exact: true });
+
+/** The stored merchant profile (the settings write can trail the screen). */
+const merchantProfile = async (host: Parameters<typeof setting>[0]) =>
+  JSON.parse((await setting(host, "merchant-profile")) ?? "{}") as Record<string, unknown>;
 
 test.describe("merchant onboarding", () => {
   test("Continue waits for the required fields; Finish unlocks Reports and the merchant settings, and it survives a restart", async ({ host }) => {
@@ -56,9 +68,8 @@ test.describe("merchant onboarding", () => {
     // → Home, with the Reports tile.
     await expect.poll(() => productPath(host)).toBe("/home");
     await expect(frame.getByRole("link", { name: "Reports" })).toBeVisible();
-    const stored = JSON.parse((await setting(host, "merchant-profile")) ?? "{}");
-    expect(stored).toMatchObject({ ...MERCHANT_PROFILE });
-    expect(Date.parse(stored.completedAt)).toBeGreaterThan(Date.now() - 120_000);
+    await expect.poll(() => merchantProfile(host)).toMatchObject({ ...MERCHANT_PROFILE, completedAt: expect.any(String) });
+    expect(Date.parse((await merchantProfile(host)).completedAt as string)).toBeGreaterThan(Date.now() - 120_000);
 
     // Settings switches to the merchant menu.
     await frame.getByRole("link", { name: "Settings" }).click();
@@ -111,13 +122,13 @@ test.describe("settings", () => {
     // The preview is the full sample receipt.
     await expect(frame.getByText("Preview", { exact: true })).toBeVisible();
     await expect(frame.getByText("Corner Bakery", { exact: true })).toBeVisible();
-    expect(JSON.parse((await setting(host, "merchant-profile")) ?? "{}")).toMatchObject({
+    await expect.poll(() => merchantProfile(host)).toMatchObject({
       businessName: "Corner Bakery",
       businessAddress: "Main St 12",
       taxId: "TAX-778",
     });
     // Editing the receipt does not onboard the merchant.
-    expect(JSON.parse((await setting(host, "merchant-profile"))!).completedAt).toBeUndefined();
+    expect((await merchantProfile(host)).completedAt).toBeUndefined();
     await frame.getByRole("button", { name: "Done" }).click();
     await expect(frame.getByRole("link", { name: "Payment Method" })).toBeVisible();
 
@@ -129,7 +140,7 @@ test.describe("settings", () => {
     await expect(frame.locator('[data-testid="payment-completed"]')).toBeVisible();
     await frame.getByRole("button", { name: "Review Receipt" }).click();
     await expect(frame.getByText(`Payment Record #${req.id.slice(-4)}`)).toBeVisible();
-    const receipt = frame.locator("main svg").first();
+    const receipt = frame.locator('[data-testid="receipt-svg"] svg');
     await expect(receipt).toContainText("Corner Bakery");
     await expect(receipt).toContainText("Main St 12");
     await expect(receipt).toContainText("TAX-778");
@@ -240,23 +251,12 @@ test.describe("settings", () => {
     test("Wallet (URL-only) shows the host's coin balance and follows it live", async ({ host }) => {
       await host.next("accountGet", undefined, { timeout: 90_000 });
       const frame = host.productFrame();
-      const balance = frame.getByText(/^\d+\.\d{2,} CASH$/);
+      const balance = frame.locator('[data-testid="wallet-balance"]');
       await expect(balance).toHaveText("12.50 CASH", { timeout: 60_000 });
       await expect(frame.getByText("Connected via Polkadot host")).toBeVisible();
       await host.settle();
 
-      // The first document's balance subscription reaches the host before the
-      // host sees that document's handshake, and the host prunes it as stale
-      // (host_changes_needed), so live pushes would go nowhere. Remount the
-      // screen with a client-side back/forward — no document reload — to get
-      // a subscription the host keeps.
-      await frame.locator("header a[href='/settings/']").click();
-      await expect(frame.getByRole("link", { name: "Payment Method" })).toBeVisible();
-      const since = host.mark();
-      await frame.locator("body").evaluate(() => history.back());
-      await host.next("balanceSubscribe", undefined, { since });
-      await expect(balance).toHaveText("12.50 CASH");
-
+      // Live pushes on the screen's own subscription.
       await host.setBalance(30_000_000n);
       await expect(balance).toHaveText("30.00 CASH");
       await host.setBalance(1_234_567n);
@@ -278,11 +278,32 @@ test.describe("settings", () => {
     await expect(frame.getByRole("button", { name: "Saved" })).toBeVisible();
     await expect(frame.getByText(fp, { exact: true })).toBeVisible();
     await expect(frame.getByText("Set", { exact: true })).toBeVisible();
-    // The passphrase lives in the product's own localStorage, not host storage.
-    expect(await setting(host, "t3rminal:manual-encryption-passphrase")).toBeUndefined();
+    // The passphrase stays in the product's own localStorage: no host storage
+    // key or value carries it.
+    expect(await hostStorageHits(host, "correct horse battery")).toEqual([]);
+    expect(await host.storageKeys()).toContain("settings"); // the scan did see host storage
 
     frame = await restartOn(host, "/settings/encryption");
     await expect(frame.getByText(fp, { exact: true })).toBeVisible();
     await expect(frame.getByRole("button", { name: "Clear" })).toBeVisible();
+  });
+
+  test("Report Encryption: Clear removes the key from this device", async ({ host }) => {
+    // BUG: app/(shell)/settings/encryption/page.tsx asks through
+    // window.confirm(). The product runs in a sandboxed host frame without
+    // allow-modals, where Chrome ignores the call ("Ignored call to
+    // 'confirm()'. The document is sandboxed…") and it returns false, so
+    // Clear never clears. The confirmation needs to be in-app. The dialog
+    // handler below accepts it should a browser ever show it.
+    test.fail();
+    await bootTerminal(host);
+    const frame = await restartOn(host, "/settings/encryption");
+    await frame.getByPlaceholder("Enter a secret phrase").fill("lunch shift key");
+    await frame.getByRole("button", { name: "Save" }).click();
+    await expect(frame.getByText(keyFingerprint("lunch shift key"), { exact: true })).toBeVisible();
+
+    host.page.on("dialog", (d) => void d.accept());
+    await frame.getByRole("button", { name: "Clear" }).click();
+    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible({ timeout: 5_000 });
   });
 });

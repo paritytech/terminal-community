@@ -1502,7 +1502,7 @@ function TerminalPageInner() {
 
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
-              <span className="text-display-xl font-mono text-fg-primary break-all">
+              <span data-testid="completed-amount" className="text-display-xl font-mono text-fg-primary break-all">
                 {finalAmount}
               </span>
               <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>

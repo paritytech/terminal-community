@@ -22,10 +22,6 @@ import { buildCheque, randomCoins } from "../host/payer";
 const NOT_CLAIMED_COPY =
   "No coins arrived for this payment. Ask the customer to check their Polkadot app, then retry.";
 
-/** Live status subscribers the host holds for a registration (not on T3Host; read off the control surface). */
-const subscriberCount = (host: T3Host, idHex: string) =>
-  host.page.evaluate((id) => (window as unknown as { __T3_HOST__: { topUpSubscriberCount(i: string): number } }).__T3_HOST__.topUpSubscriberCount(id), idHex);
-
 const last4 = (id: string) => id.slice(-4).toLowerCase();
 
 async function expectClaimError(frame: FrameLocator, copy: string) {
@@ -50,25 +46,35 @@ async function finishSale(frame: FrameLocator) {
   await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
 }
 
-/** Record a 12.50 sale on the first best-block `claimed` and wait for the watcher to follow it. */
+/** The big amount on the "Payment received" screen: the first bare figure in its details card. */
+const completedAmount = (frame: FrameLocator) => frame.locator('[data-testid="completed-amount"]');
+
+/**
+ * Record a sale on the first best-block `claimed` and wait until only the
+ * background watcher still follows the registration: the claim dropped its
+ * own subscription and the watcher opened a new one.
+ */
 async function recordConfirmingSale(host: T3Host, frame: FrameLocator, amount = "12.50") {
   const { req, topUp } = await chargeAndPay(host, frame, amount);
+  const claimSub = await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex);
+  expect(claimSub.known).toBe(true);
   const since = host.mark();
   await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
   await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
   const sale = await waitForSale(host, req.id);
   expect(sale.finalizedAt).toBeUndefined();
   expect(sale.topUpId).toBe(topUpIdHex(req.id, 1).slice(2));
-  // The background watcher opens its own subscription on the same registration.
+  // The claim lets go of its subscription once the sale is settled…
+  await host.next("topUpStatusUnsubscribe", (e) => e.idHex === topUp.idHex, { since });
+  // …and the background watcher opens its own on the same registration.
   await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex && e.known, { since });
-  await expect.poll(() => subscriberCount(host, topUp.idHex)).toBeGreaterThan(0);
+  await expect.poll(() => host.topUpSubscriberCount(topUp.idHex)).toBe(1);
   return { req, topUp };
 }
 
 test.describe("coins claim outcomes", () => {
-  test.beforeEach(async ({ host }) => {
-    await host.setTopUpScript("manual");
-  });
+  // Every status in this file is emitted by the spec.
+  test.use({ hostOptions: { topUpScript: "manual" } });
 
   test("partial claim at claim time records the credited part as a final sale", async ({ host }) => {
     const frame = await bootTerminal(host);
@@ -103,6 +109,7 @@ test.describe("coins claim outcomes", () => {
     await expect(row).toHaveAttribute("data-claim-state", "partial");
     await expect(row.locator('[data-testid="history-row-status"]')).toContainText("Received 5.00 of 12.50");
     await expect(row).toContainText("5.00 CASH");
+    await expect(frame.locator('[data-testid="history-group-total"]')).toHaveText("5.00 CASH");
     await row.click();
     const detail = frame.locator('[data-testid="history-detail-status"]');
     await expect(detail).toHaveAttribute("data-claim-state", "partial");
@@ -112,8 +119,25 @@ test.describe("coins claim outcomes", () => {
     // Today's income counts the credited amount, not the requested one.
     await frame.getByRole("link", { name: "Home", exact: true }).click();
     await expect(frame.locator('[data-testid="todays-income"]')).toHaveText("5.00");
-    // Final at once: the claim's own subscription was the only one — no watcher.
+    // Final at once: the claim's own subscription was the only one — no
+    // watcher — and the claim let go of it.
     expect(host.all("topUpStatusSubscribe").filter((e) => e.idHex === topUp.idHex)).toHaveLength(1);
+    expect(host.all("topUpStatusUnsubscribe").filter((e) => e.idHex === topUp.idHex)).toHaveLength(1);
+  });
+
+  // BUG(app): on a partial claim the completed screen's big figure is the
+  // requested amount (terminal/page.tsx renders `finalAmount`, the charge),
+  // not what was credited; only the coins-shortfall line below carries the
+  // credited 5.00. The merchant's headline number should be the money in.
+  test("partial claim at claim time: the completed screen's amount is the credited one", async ({ host }) => {
+    test.fail();
+    const frame = await bootTerminal(host);
+    const { topUp } = await chargeAndPay(host, frame, "12.50");
+    await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: planck("5.00").toString() });
+    await expect(frame.locator('[data-testid="coins-shortfall"]')).toHaveText(
+      "Received 5.00 of 12.50 CASH. The rest didn't arrive.",
+    );
+    await expect(completedAmount(frame)).toHaveText("5.00", { timeout: 5_000 });
   });
 
   test("a partial claim that credited nothing is a failed claim, and no sale is written", async ({ host }) => {
@@ -123,11 +147,12 @@ test.describe("coins claim outcomes", () => {
 
     await expectClaimError(frame, NOT_CLAIMED_COPY);
     await expect(frame.locator('[data-testid="btn-cancel-transaction"]')).toBeVisible();
-    // The host's record is terminal, and the terminal did not write a sale.
-    const [record] = await host.getTopUps();
-    expect(record).toMatchObject({ idHex: topUpIdHex(req.id, 1), terminal: true });
+    // No sale, no second registration, and nothing left following the claim:
+    // the claim let go of its one subscription and no watcher took over.
     expect((await storedSales(host)).find((s) => s.saleId === req.id)).toBeUndefined();
-    expect(host.all("topUp")).toHaveLength(1);
+    expect(host.all("topUp").map((e) => e.record.idHex)).toEqual([topUpIdHex(req.id, 1)]);
+    await host.next("topUpStatusUnsubscribe", (e) => e.idHex === topUp.idHex);
+    expect(host.all("topUpStatusSubscribe").filter((e) => e.idHex === topUp.idHex)).toHaveLength(1);
   });
 
   test("NotClaimed, then Retry claim registers attempt 2 and the sale carries its id", async ({ host }) => {
@@ -205,6 +230,7 @@ test.describe("coins claim outcomes", () => {
     await expect(row).toHaveAttribute("data-claim-state", "confirming");
     await expect(row.locator('[data-testid="history-row-status"]')).toContainText("Received · confirming");
 
+    const since = host.mark();
     await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: planck("5.00").toString() });
 
     const sale = await waitForSale(host, req.id, (s) => !!s.finalizedAt);
@@ -225,11 +251,13 @@ test.describe("coins claim outcomes", () => {
     await expect(frame.locator('[data-testid="history-detail-status"]')).toContainText(
       "5.00 of the 12.50 CASH requested arrived",
     );
-    // The watch is over: the host saw it unsubscribe or drop the terminal registration.
-    await expect.poll(() => subscriberCount(host, topUp.idHex)).toBe(0);
+    // The watch is over: the watcher let go of its subscription.
+    await host.next("topUpStatusUnsubscribe", (e) => e.idHex === topUp.idHex, { since });
 
     await frame.getByRole("link", { name: "Home", exact: true }).click();
     await expect(frame.locator('[data-testid="todays-income"]')).toHaveText("5.00");
+    // …and, the History and Home round trip later, it never picked it up again.
+    expect(host.events.slice(since).filter((e) => e.type === "topUpStatusSubscribe")).toHaveLength(0);
   });
 
   test("a reorg after the sale reverts it: flagged in History and left out of the totals", async ({ host }) => {
@@ -248,11 +276,13 @@ test.describe("coins claim outcomes", () => {
     const income = frame.locator('[data-testid="todays-income"]');
     await expect(income).toHaveText("13.50"); // confirming sales count until their last word
 
+    const since = host.mark();
     await host.emitTopUpStatus(topUp.idHex, { tag: "NotClaimed" });
     const sale = await waitForSale(host, req.id, (s) => !!s.revertedAt);
     expect(sale.finalizedAt).toBeUndefined();
     expect(sale.amount).toBe("12.50"); // the row stays as recorded, only flagged
     await expect(income).toHaveText("1.00");
+    await host.next("topUpStatusUnsubscribe", (e) => e.idHex === topUp.idHex, { since });
 
     await frame.getByRole("link", { name: "Sales", exact: true }).click();
     await expect(frame.locator('[data-testid="sales-transactions"]')).toHaveText("1");
@@ -262,7 +292,7 @@ test.describe("coins claim outcomes", () => {
     const row = frame.locator(`[data-testid="history-row-${last4(req.id)}"]`);
     await expect(row).toHaveAttribute("data-claim-state", "reverted");
     await expect(row.locator('[data-testid="history-row-status"]')).toContainText("Reverted");
-    await expect(row.locator(".line-through")).toHaveText("12.50 CASH");
+    await expect(row.getByText("12.50 CASH", { exact: true })).toHaveCSS("text-decoration-line", "line-through");
     const keptRow = frame.locator(`[data-testid="history-row-${last4(kept.req.id)}"]`);
     await expect(keptRow).toHaveAttribute("data-claim-state", "received");
 

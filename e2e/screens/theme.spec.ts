@@ -2,15 +2,9 @@ import { test, expect } from "../host/fixture";
 import { bootTerminal } from "../host/flows";
 
 // Port of e2e/theme.spec.ts onto the Terminal test host.
-//
-// FIXME(host): the two original tests need live host theme changes, which this
-// host does not deliver yet. The product posts host_theme_subscribe_start
-// BEFORE host_handshake_request; e2e/host/page.ts tags that subscription with
-// the previous generation and prunes it when the handshake arrives, so
-// host.setTheme() has no subscriber left. Both stay fixme until the host keeps
-// subscriptions opened just before a document's handshake.
+
 test.describe("Theme follows the host", () => {
-  test.fixme("host light/dark switches the design-system theme without a reload", async ({ host }) => {
+  test("host light/dark switches the design-system theme without a reload", async ({ host }) => {
     const frame = await bootTerminal(host);
 
     const html = frame.locator("html");
@@ -35,7 +29,34 @@ test.describe("Theme follows the host", () => {
     expect(stored).toBe("berlin-day");
   });
 
-  test.fixme("a theme picked in Settings overrides the host until set back to follow", async ({ host }) => {
+  test("a named host theme selects the design-system theme of the same name", async ({ host }) => {
+    const frame = await bootTerminal(host);
+    const html = frame.locator("html");
+
+    // The ids the Polkadot app sends on Android and iOS.
+    const named = (custom: string, variant: "Light" | "Dark") => host.setTheme({ custom, variant });
+
+    await named("tokyo", "Light");
+    await expect(html).toHaveAttribute("data-theme", "tokyo");
+
+    await named("lisbon", "Light");
+    await expect(html).toHaveAttribute("data-theme", "lisbon");
+
+    await named("malta", "Light");
+    await expect(html).toHaveAttribute("data-theme", "malta");
+
+    await named("berlinNight", "Dark");
+    await expect(html).toHaveAttribute("data-theme", "berlin-night");
+
+    await named("berlinDay", "Light");
+    await expect(html).toHaveAttribute("data-theme", "berlin-day");
+
+    // A theme the terminal doesn't have falls back to the light/dark pair.
+    await named("oslo", "Dark");
+    await expect(html).toHaveAttribute("data-theme", "berlin-night");
+  });
+
+  test("a theme picked in Settings overrides the host until set back to follow", async ({ host }) => {
     const frame = await bootTerminal(host);
     const html = frame.locator("html");
 
@@ -67,8 +88,8 @@ test.describe("Theme follows the host", () => {
   test.describe("on a dark host", () => {
     test.use({ hostOptions: { theme: "dark" } });
 
-    // What runs today without live theme events: the theme the host reports
-    // at launch, a manual override, and handing the choice back.
+    // The theme the host reports at launch (no live change involved), a
+    // manual override, and handing the choice back.
     test("a theme picked in Settings overrides the host's, and Follow brings the host's back", async ({ host }) => {
       const frame = await bootTerminal(host);
       const html = frame.locator("html");

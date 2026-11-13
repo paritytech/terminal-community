@@ -38,6 +38,7 @@ import type {
   TopUpAnswer,
   TopUpRecord,
   TopUpScript,
+  ThemeInput,
   TopUpStatusWire,
 } from "./protocol";
 
@@ -106,7 +107,8 @@ function track<T>(set: Set<T>, sub: T): () => void {
   return () => void set.delete(sub);
 }
 
-function toTheme(t: "light" | "dark"): CodecType<typeof Theme> {
+function toTheme(t: ThemeInput): CodecType<typeof Theme> {
+  if (typeof t === "object") return { name: { tag: "Custom", value: t.custom }, variant: t.variant };
   return { name: { tag: "Default", value: undefined }, variant: t === "dark" ? "Dark" : "Light" };
 }
 
@@ -369,7 +371,7 @@ function emitTopUpStatus(idHex: Hex, status: TopUpStatusWire): void {
 // ── control surface (page.evaluate targets) ──────────────────────────────
 function createControl(iframe: HTMLIFrameElement) {
   return {
-    setTheme(t: "light" | "dark") { theme = toTheme(t); themeSubs.forEach((s) => s.send(theme)); },
+    setTheme(t: ThemeInput) { theme = toTheme(t); themeSubs.forEach((s) => s.send(theme)); },
     setAccountConnected(c: boolean) {
       accountConnected = c;
       accountSubs.forEach((s) => s.send(c ? "connected" : "disconnected"));

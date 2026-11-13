@@ -2,19 +2,37 @@
 // Helpers for the resilience specs (watcher resume, pre-flight, resubscribe).
 import { randomBytes } from "node:crypto";
 import { encodeAddress } from "@polkadot/util-crypto";
+import { blake2b256 } from "@polkadot-labs/hdkd-helpers";
 import type { Page } from "@playwright/test";
-import type { T3Host } from "../host/fixture";
+import { devRoot, getPublicKey, productSecret } from "../host/keys";
 import { planck, type StoredSale } from "../host/flows";
+import type { HostConfig } from "../host/protocol";
+
+const PRODUCT_URL = process.env.E2E_PRODUCT_URL ?? "http://localhost:5199";
 
 /**
- * The merchant address the terminal files its sales under: the product
- * account (index 0) as a generic-Substrate (prefix 42) SS58 address, exactly
- * what `normalizeToAssetHubAddress(account.address)` yields. History and
- * Home only show sales whose merchant matches it.
+ * RFC-0022 plain index → 32-byte derivation index: the u32 little-endian
+ * followed by blake2b256("product-account-index")[..28]. Same bytes as
+ * host-container's `indexBytes`, which the host page derives with.
  */
-export async function merchantAddress(host: T3Host): Promise<string> {
-  const pub = await host.merchantPublicKey(0);
-  return encodeAddress(Uint8Array.from(Buffer.from(pub.slice(2), "hex")), 42);
+function indexBytes(index: number): Uint8Array {
+  const out = new Uint8Array(32);
+  new DataView(out.buffer).setUint32(0, index, true);
+  out.set(blake2b256(new TextEncoder().encode("product-account-index")).slice(0, 28), 4);
+  return out;
+}
+
+/**
+ * The merchant address the terminal files its sales under, computed in Node
+ * so it can go into `hostOptions.storage` before the host boots: the product
+ * account (index 0 under `root`) as a generic-Substrate (prefix 42) SS58
+ * address, which is what `normalizeToAssetHubAddress(account.address)` yields.
+ * History and Home only show sales whose merchant matches it.
+ */
+export function merchantAddressFor(root: HostConfig["root"] = "Bob", index = 0): string {
+  const productId = new URL(PRODUCT_URL).host;
+  const pub = getPublicKey(productSecret(devRoot(root), productId, indexBytes(index)));
+  return encodeAddress(pub, 42);
 }
 
 /** A fresh 32-hex payment id, the shape the coins flow uses as saleId. */
@@ -59,15 +77,4 @@ export function captureConsole(page: Page): string[] {
   const lines: string[] = [];
   page.on("console", (m) => lines.push(m.text()));
   return lines;
-}
-
-/**
- * Live status subscribers the host holds for `idHex`. The host page exposes
- * this on window.__T3_HOST__, but T3Host has no wrapper for it yet.
- */
-export function topUpSubscriberCount(host: T3Host, idHex: string): Promise<number> {
-  return host.page.evaluate(
-    (id) => (window as unknown as { __T3_HOST__: { topUpSubscriberCount: (i: string) => number } }).__T3_HOST__.topUpSubscriberCount(id),
-    idHex,
-  );
 }

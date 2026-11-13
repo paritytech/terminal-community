@@ -1,22 +1,21 @@
 import { test, expect } from "../host/fixture";
 import { bootTerminal, charge, chargeAndPay, enterAmount, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
-import { navLinks } from "./cheques.helpers";
+import { coinageLog, navLinks } from "./cheques.helpers";
 
 /**
  * Leaving a sale before the customer pays, the bottom nav around it, the
  * cents keypad, and the largest amount a cheque can carry.
  */
 
-const UNKNOWN_COPY =
-  "Couldn't claim the payment. If the Polkadot app is showing a message, dismiss it, then retry.";
-
 test.describe("cancel while waiting for the customer", () => {
   test("Close keeps the QR; Cancel returns to an empty keypad and the cheque is no longer taken", async ({ host }) => {
     const frame = await bootTerminal(host);
     const req = await charge(host, frame, "7.25");
-    const subscribes = host.all("statementSubscribe").length;
+    const topic = topicHex(req.id);
+    expect(await host.statementSubscriberCount(topic)).toBe(1);
 
     // Open the modal, then back out of it.
+    const closed = host.mark();
     await frame.locator('[data-testid="btn-cancel-transaction"]').click();
     const modal = frame.locator('[data-testid="cancel-modal"]');
     await expect(modal).toContainText("Do you want to cancel");
@@ -28,12 +27,19 @@ test.describe("cancel while waiting for the customer", () => {
     await expect(frame.locator('[data-testid="waiting-text"]')).toHaveText("Scan QR to pay");
     await expect(frame.locator('[data-testid="qr-code"]')).toHaveAttribute("data-qr-value", req.raw);
     await expect(frame.locator('[data-testid="qr-amount"]')).toHaveText("7.25");
-    expect(host.all("statementSubscribe")).toHaveLength(subscribes);
+    const sinceClose = (type: "statementSubscribe" | "statementUnsubscribe") =>
+      host.events.slice(closed).filter((e) => e.type === type);
+    expect(sinceClose("statementSubscribe")).toHaveLength(0);
+    expect(sinceClose("statementUnsubscribe")).toHaveLength(0);
+    expect(await host.statementSubscriberCount(topic)).toBe(1);
 
-    // Now cancel for real.
+    // Now cancel for real: the terminal closes its subscription to the topic.
+    const cancelled = host.mark();
     await frame.locator('[data-testid="btn-cancel-transaction"]').click();
     await frame.locator('[data-testid="btn-cancel-modal-confirm"]').click();
     await expect(modal).toHaveCount(0);
+    await host.next("statementUnsubscribe", (e) => e.topics.includes(topic), { since: cancelled, timeout: 15_000 });
+    expect(await host.statementSubscriberCount(topic)).toBe(0);
     await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
     await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("0.00");
     await expect(frame.locator('[data-testid="btn-charge"]')).toBeDisabled();
@@ -49,18 +55,23 @@ test.describe("cancel while waiting for the customer", () => {
     await waitForSale(host, next.req.id);
     expect(host.all("topUp").map((e) => e.record.idHex)).toEqual([topUpIdHex(next.req.id, 1)]);
     expect((await storedSales(host)).map((s) => s.saleId)).toEqual([next.req.id]);
+    // And the abandoned topic was never re-opened.
+    expect(host.events.slice(cancelled).filter((e) => e.type === "statementSubscribe" && e.topics.includes(topic))).toHaveLength(0);
   });
 
-  test("Cancel is not offered once the coins are being claimed", async ({ host }) => {
-    await host.setTopUpScript("manual");
-    const frame = await bootTerminal(host);
-    const { topUp } = await chargeAndPay(host, frame, "4.00");
-    await expect(frame.locator('[data-testid="coins-claiming"]')).toBeVisible();
-    await expect(frame.locator('[data-testid="btn-cancel-transaction"]')).toHaveCount(0);
-    await expect(frame.locator('[data-testid="cancel-modal"]')).toHaveCount(0);
-    await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
-    await expect(frame.locator('[data-testid="payment-completed"]')).toBeVisible();
-    await expect(frame.locator('[data-testid="btn-cancel-transaction"]')).toHaveCount(0);
+  test.describe("with the claim held by the host", () => {
+    test.use({ hostOptions: { topUpScript: "manual" } });
+
+    test("Cancel is not offered once the coins are being claimed", async ({ host }) => {
+      const frame = await bootTerminal(host);
+      const { topUp } = await chargeAndPay(host, frame, "4.00");
+      await expect(frame.locator('[data-testid="coins-claiming"]')).toBeVisible();
+      await expect(frame.locator('[data-testid="btn-cancel-transaction"]')).toHaveCount(0);
+      await expect(frame.locator('[data-testid="cancel-modal"]')).toHaveCount(0);
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
+      await expect(frame.locator('[data-testid="payment-completed"]')).toBeVisible();
+      await expect(frame.locator('[data-testid="btn-cancel-transaction"]')).toHaveCount(0);
+    });
   });
 
   test("the bottom nav is gone while the QR is up and comes back after Cancel", async ({ host }) => {
@@ -163,40 +174,66 @@ test.describe("amount limit", () => {
     expect(sale.amount).toBe("10000.00");
   });
 
-  // Pins CURRENT behaviour (see bugs in the report): the keypad takes up to
-  // 9,999,999.99 but a cheque carries at most 10000 (MAX_AMOUNT). Setup
-  // throws before any QR is minted, the banner stays on "Generating Payment"
-  // under a generic claim error, "Retry claim" does nothing (there is no
-  // pending claim) and only Cancel gets the merchant out.
-  test("above 10000 no cheque is armed; Retry does nothing and Cancel returns to the keypad", async ({ host }) => {
+  // BUG (open): the keypad takes up to 9,999,999.99 but a cheque carries at
+  // most 10000 (MAX_AMOUNT in lib/payments/coinage/deeplink.ts). Charge is
+  // accepted, the connectivity pre-flight runs, then normalizeAmount throws in
+  // the coinage setup (use-coinage-payment.ts): the banner stays on
+  // "Generating Payment" over the generic "Couldn't claim the payment…" copy,
+  // with a "Retry claim" that has nothing to retry. This test states the
+  // correct behaviour, so it fails until the app refuses the amount up front.
+  test("above 10000 the merchant is told the limit before anything is armed", async ({ host }) => {
+    test.fail(true, "BUG: amounts above MAX_AMOUNT (10000) reach coinage setup, which throws; no limit message, a no-op Retry claim");
+    const frame = await bootTerminal(host);
+    for (const digit of "1200000") await frame.locator(`[data-testid="calc-digit-${digit}"]`).click();
+    const since = host.mark();
+    const shown = Number((await frame.locator('[data-testid="amount-display"]').innerText()).replace(/[^\d.]/g, ""));
+    // Acceptable fixes: the keypad stops at the limit, or it shows 12000.00
+    // and says why it will not charge it (Charge disabled, or pressed).
+    if (shown > 10_000) {
+      const chargeBtn = frame.locator('[data-testid="btn-charge"]');
+      if (await chargeBtn.isEnabled()) await chargeBtn.click();
+      // visible only: the Next dev overlay carries the thrown setup error
+      // ("amount exceeds max 10000") in a hidden node.
+      await expect(
+        frame.getByText(/10,?000/).filter({ hasText: /max|limit|too (large|high|much)|exceed|up to/i, visible: true }).first(),
+      ).toBeVisible({ timeout: 10_000 });
+    }
+    await expect(frame.locator('[data-testid="btn-retry-claim"]')).toHaveCount(0);
+    await expect(frame.locator('[data-testid="waiting-text"]')).not.toHaveText("Generating Payment");
+
+    // Nothing reached the host: no pre-flight, no key, no subscription, no claim.
+    // (The periodic connectivity check also subscribes to the balance, every
+    // 15 s, so this window is kept to the refusal itself.)
+    const after = (type: "balanceSubscribe" | "entropy" | "statementSubscribe" | "topUp") =>
+      host.events.slice(since).filter((e) => e.type === type);
+    expect(after("balanceSubscribe")).toHaveLength(0);
+    expect(after("entropy")).toHaveLength(0);
+    expect(after("statementSubscribe")).toHaveLength(0);
+    expect(after("topUp")).toHaveLength(0);
+  });
+
+  // PIN OF CURRENT BEHAVIOUR (not a statement of what is right — see the
+  // test.fail above). Whatever the screen shows today, an over-limit sale
+  // must at least never arm a cheque or claim anything, and Cancel must get
+  // the merchant back to the keypad.
+  test("[current behaviour] above 10000 no cheque is armed and Cancel returns to the keypad", async ({ host }) => {
+    const log = coinageLog(host);
     const frame = await bootTerminal(host);
     await enterAmount(frame, "12000.00");
     const since = host.mark();
+    const seen = log.mark();
     await frame.locator('[data-testid="btn-charge"]').click();
 
-    const error = frame.locator('[data-testid="coins-claim-error"]');
-    await expect(error).toHaveText(UNKNOWN_COPY);
-    await expect(frame.locator('[data-testid="qr-amount"]')).toHaveText("12000.00");
-    await expect(frame.locator('[data-testid="waiting-text"]')).toHaveText("Generating Payment");
-    await expect(frame.locator('[data-testid="qr-code"]')).not.toHaveAttribute("data-qr-value", /.+/);
-    for (const link of Object.values(navLinks(frame))) await expect(link).toHaveCount(0);
-
-    // Host side: the pre-flight ran, but no key, no subscription, no claim.
-    expect(host.all("balanceSubscribe").length).toBeGreaterThan(0);
+    // Barrier: the pre-flight runs, then the coinage setup gives up on the
+    // amount before it derives a key, so nothing below can still be pending.
+    await host.next("balanceSubscribe", undefined, { since, timeout: 15_000 });
+    await log.waitFor(/setup FAILED: amount exceeds max 10000/, seen);
     const after = (type: "entropy" | "statementSubscribe" | "topUp") => host.events.slice(since).filter((e) => e.type === type);
     expect(after("entropy")).toHaveLength(0);
     expect(after("statementSubscribe")).toHaveLength(0);
-
-    // Retry claim is offered but has nothing to retry.
-    const retry = frame.locator('[data-testid="btn-retry-claim"]');
-    await expect(retry).toBeVisible();
-    await retry.click();
-    await expect(error).toHaveText(UNKNOWN_COPY);
-    await expect(frame.locator('[data-testid="coins-claiming"]')).toHaveCount(0);
-    expect(after("statementSubscribe")).toHaveLength(0);
     expect(after("topUp")).toHaveLength(0);
+    await expect(frame.locator('[data-testid="qr-code"]')).not.toHaveAttribute("data-qr-value", /.+/);
 
-    // Cancel is the way out.
     await frame.locator('[data-testid="btn-cancel-transaction"]').click();
     await frame.locator('[data-testid="btn-cancel-modal-confirm"]').click();
     await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();

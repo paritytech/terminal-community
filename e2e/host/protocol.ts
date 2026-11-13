@@ -22,6 +22,9 @@ export interface HostConfig {
   legacyAccounts: boolean;
 }
 
+/** A host theme: the light/dark pair, or a named theme as the Polkadot app sends it. */
+export type ThemeInput = "light" | "dark" | { custom: string; variant: "Light" | "Dark" };
+
 export type BalanceMode = "send" | "PermissionDenied" | "Unsupported" | "NotImplemented" | "silent";
 export type AccountGetMode = "ok" | "NotConnected" | "Rejected" | "hang";
 export type StorageMode = "ok" | "Full" | "Unknown";

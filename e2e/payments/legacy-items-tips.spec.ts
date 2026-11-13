@@ -8,6 +8,7 @@ import {
   productFrameHandle,
   productPath,
   readPendingSale,
+  receiptSvg,
   stashPendingSale,
 } from "./checkout.helpers";
 
@@ -106,7 +107,7 @@ test.describe("legacy items -> tips -> terminal", () => {
 
     // Receipt: itemized, with the Subtotal / Tip / Total breakdown.
     await frame.getByRole("button", { name: "Review Receipt" }).click();
-    const receipt = frame.locator("main svg").first();
+    const receipt = receiptSvg(frame);
     await expect(receipt).toContainText("2 × Flat white");
     await expect(receipt).toContainText("7.00");
     await expect(receipt).toContainText("1 × Muffin");

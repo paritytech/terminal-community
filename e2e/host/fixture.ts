@@ -16,6 +16,7 @@ import type {
   TopUpAnswer,
   TopUpRecord,
   TopUpScript,
+  ThemeInput,
   TopUpStatusWire,
 } from "./protocol";
 import { buildCheque, parseChequeDeeplink, randomCoins, type ChequeRequest } from "./payer";
@@ -97,7 +98,7 @@ export class T3Host {
 
   productFrame(): FrameLocator { return this.page.frameLocator("#product-frame"); }
   // theme / accounts / storage
-  setTheme(t: "light" | "dark") { return this.call("setTheme", t); }
+  setTheme(t: ThemeInput) { return this.call("setTheme", t); }
   setAccountConnected(c: boolean) { return this.call("setAccountConnected", c); }
   setAccountGetMode(m: AccountGetMode) { return this.call("setAccountGetMode", m); }
   merchantPublicKey(index = 0) { return this.call<[string, number], Hex>("getProductAccount", new URL(PRODUCT_URL).host, index); }

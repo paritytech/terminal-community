@@ -1,7 +1,7 @@
 import { test, expect } from "../host/fixture";
 import { bootTerminal, charge, chargeAndPay, hexOf, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
 import { buildCheque, randomCoins, topicFor, type ChequeRequest } from "../host/payer";
-import { coinageLog, coinsHex, pinNextPaymentRequest, strangerKey } from "./cheques.helpers";
+import { coinageLog, coinsHex, expectPinTook, pinNextPaymentRequest, strangerKey } from "./cheques.helpers";
 
 /**
  * The terminal listens on its payment topic, where anyone can post. Only a
@@ -12,7 +12,11 @@ import { coinageLog, coinsHex, pinNextPaymentRequest, strangerKey } from "./cheq
 
 type FrameLoc = Awaited<ReturnType<typeof bootTerminal>>;
 
-/** Inject several statements in one host task, so they reach the app back to back. */
+/**
+ * Inject several statements in one host task, so they reach the app back to
+ * back. T3Host only injects one statement per evaluate, and two evaluates may
+ * let the app handle the first before the second is even posted.
+ */
 async function injectTogether(host: { page: import("@playwright/test").Page }, topic: Uint8Array, datas: Uint8Array[]) {
   const t = hexOf(topic);
   const ds = datas.map(hexOf);
@@ -136,105 +140,121 @@ test.describe("coins cheque filter — one sale, one claim", () => {
     expect(await storedSales(host)).toHaveLength(1);
   });
 
-  test("the same cheque re-sent while claiming and after payment is claimed once", async ({ host }) => {
-    await host.setTopUpScript("manual");
-    const frame = await bootTerminal(host);
-    const req = await charge(host, frame, "6.00");
-    const coins = randomCoins(2);
-    const { topic, data } = buildCheque(req, coins);
+  test.describe("with the claim held by the host", () => {
+    test.use({ hostOptions: { topUpScript: "manual" } });
 
-    await host.injectStatement(topic, data);
-    const topUp = await host.waitForTopUp();
-    const claiming = frame.locator('[data-testid="coins-claiming"]');
-    await expect(claiming).toContainText("Handing the payment to the Polkadot app");
+    test("the same cheque re-sent while claiming and after payment is claimed once", async ({ host }) => {
+      const frame = await bootTerminal(host);
+      const req = await charge(host, frame, "6.00");
+      const coins = randomCoins(2);
+      const { topic, data } = buildCheque(req, coins);
 
-    // While the claim runs: the customer's app re-posts the same statement.
-    await host.injectStatement(topic, data);
-    // Statuses travel the same channel after it, so once the UI shows this
-    // stage the duplicate has been delivered — and dropped.
-    await host.emitTopUpStatus(topUp.idHex, { tag: "Detecting" });
-    await expect(claiming).toContainText("Waiting for the coins to reach the chain");
-    expect(host.all("topUp")).toHaveLength(1);
+      const since = host.mark();
+      await host.injectStatement(topic, data);
+      const topUp = await host.waitForTopUp({ since });
+      const claiming = frame.locator('[data-testid="coins-claiming"]');
+      await expect(claiming).toContainText("Handing the payment to the Polkadot app");
 
-    await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
-    await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
-    await waitForSale(host, req.id);
+      // While the claim runs: the customer's app re-posts the same statement.
+      await host.injectStatement(topic, data);
+      // Statuses travel the same channel after it, so once the UI shows this
+      // stage the duplicate has been delivered — and dropped.
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Detecting" });
+      await expect(claiming).toContainText("Waiting for the coins to reach the chain");
+      expect(host.all("topUp")).toHaveLength(1);
 
-    // After payment: once more.
-    await host.injectStatement(topic, data);
-    await frame.locator('[data-testid="btn-done"]').click();
-    await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
+      await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
+      await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+      await waitForSale(host, req.id);
 
-    // The next sale is the barrier: its claim is the second and last one.
-    const next = await chargeAndPay(host, frame, "2.00");
-    expect(next.topUp.idHex).toBe(topUpIdHex(next.req.id, 1));
-    const ids = host.all("topUp").map((e) => e.record.idHex);
-    expect(ids).toEqual([topUpIdHex(req.id, 1), topUpIdHex(next.req.id, 1)]);
-    const sales = await storedSales(host);
-    expect(sales.filter((s) => s.saleId === req.id)).toHaveLength(1);
+      // After payment: once more.
+      await host.injectStatement(topic, data);
+      await frame.locator('[data-testid="btn-done"]').click();
+      await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
+
+      // The next sale is the barrier: its claim is the second and last one.
+      const next = await chargeAndPay(host, frame, "2.00");
+      expect(next.topUp.idHex).toBe(topUpIdHex(next.req.id, 1));
+      const ids = host.all("topUp").map((e) => e.record.idHex);
+      expect(ids).toEqual([topUpIdHex(req.id, 1), topUpIdHex(next.req.id, 1)]);
+      const sales = await storedSales(host);
+      expect(sales.filter((s) => s.saleId === req.id)).toHaveLength(1);
+    });
   });
 
-  test("a cheque posted before the terminal subscribes is replayed and claimed", async ({ host }) => {
-    const log = coinageLog(host);
-    const frame = await bootTerminal(host);
-    // Fix the next request's id and key so the customer can pay it before the
-    // terminal is even listening (the store keeps it, like the real one).
-    const req = await pinNextPaymentRequest(host, "5.75");
-    const coins = randomCoins(2);
-    const { topic, data } = buildCheque(req, coins);
-    await host.injectStatement(topic, data);
+  // The pinned request's key is the label itself only when the host refuses
+  // to derive entropy (the CSPRNG fallback in lib/payments/coinage/keys.ts).
+  test.describe("with host entropy unavailable", () => {
+    test.use({ hostOptions: { entropyMode: "error" } });
 
-    const since = host.mark();
-    await frame.locator('[data-testid="calc-digit-5"]').click();
-    await frame.locator('[data-testid="calc-digit-7"]').click();
-    await frame.locator('[data-testid="calc-digit-5"]').click();
-    await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("5.75");
-    await frame.locator('[data-testid="btn-charge"]').click();
+    test("a cheque posted before the terminal subscribes is replayed and claimed", async ({ host }) => {
+      const log = coinageLog(host);
+      const frame = await bootTerminal(host);
+      // Fix the next request's id and key so the customer can pay it before the
+      // terminal is even listening (the store keeps it, like the real one).
+      const req = await pinNextPaymentRequest(host, "5.75");
+      const coins = randomCoins(2);
+      const { topic, data } = buildCheque(req, coins);
+      await host.injectStatement(topic, data);
 
-    // The pinned label really was the key material, and the subscription to
-    // the pinned id's topic opened only AFTER the cheque was posted.
-    const entropy = await host.next("entropy", undefined, { since });
-    expect(entropy.keyHex).toBe(hexOf(req.label));
-    await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
-    // It came in the subscription's first page (the store's replay).
-    await log.waitFor(new RegExp(`armed: id=${req.id} amount=5\\.75`));
-    await log.waitFor(/page: 1 statement\(s\), isComplete=true/);
+      const since = host.mark();
+      const seen = log.mark();
+      await frame.locator('[data-testid="calc-digit-5"]').click();
+      await frame.locator('[data-testid="calc-digit-7"]').click();
+      await frame.locator('[data-testid="calc-digit-5"]').click();
+      await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("5.75");
+      await frame.locator('[data-testid="btn-charge"]').click();
 
-    const topUp = await host.waitForTopUp({ since });
-    expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
-    expect(topUp.amount).toBe(planck("5.75").toString());
-    expect(topUp.source).toEqual({ tag: "Coins", keys: coinsHex(coins) });
+      // The pinned label really was the key material, and the subscription to
+      // the pinned id's topic opened only AFTER the cheque was posted.
+      await expectPinTook(host, req, since);
+      await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
+      // It came in the subscription's first page (the store's replay).
+      await log.waitFor(new RegExp(`armed: id=${req.id} amount=5\\.75`), seen);
+      await log.waitFor(/page: 1 statement\(s\), isComplete=true/, seen);
 
-    await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
-    await expect(frame.locator('[data-testid="sale-id"]')).toHaveText(`#${req.id.slice(-4)}`);
-    const sale = await waitForSale(host, req.id);
-    expect(sale).toMatchObject({ amount: "5.75", amountPlanck: planck("5.75").toString(), topUpId: topUp.idHex.slice(2) });
-    expect(host.all("topUp")).toHaveLength(1);
-  });
+      const topUp = await host.waitForTopUp({ since });
+      expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
+      expect(topUp.amount).toBe(planck("5.75").toString());
+      expect(topUp.source).toEqual({ tag: "Coins", keys: coinsHex(coins) });
 
-  test("two valid cheques already in the store reach the terminal in one page and are claimed once", async ({ host }) => {
-    const log = coinageLog(host);
-    const frame = await bootTerminal(host);
-    const req = await pinNextPaymentRequest(host, "3.30");
-    const first = randomCoins(2);
-    const second = randomCoins(2);
-    await host.injectStatement(topicFor(req.id), buildCheque(req, first).data);
-    await host.injectStatement(topicFor(req.id), buildCheque(req, second).data);
+      await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+      await expect(frame.locator('[data-testid="sale-id"]')).toHaveText(`#${req.id.slice(-4)}`);
+      const sale = await waitForSale(host, req.id);
+      expect(sale).toMatchObject({ amount: "5.75", amountPlanck: planck("5.75").toString(), topUpId: topUp.idHex.slice(2) });
+      expect(host.all("topUp")).toHaveLength(1);
+    });
 
-    const since = host.mark();
-    await frame.locator('[data-testid="calc-digit-3"]').click();
-    await frame.locator('[data-testid="calc-digit-3"]').click();
-    await frame.locator('[data-testid="calc-digit-0"]').click();
-    await frame.locator('[data-testid="btn-charge"]').click();
+    test("two valid cheques already in the store reach the terminal in one page and are claimed once", async ({ host }) => {
+      const log = coinageLog(host);
+      const frame = await bootTerminal(host);
+      const req = await pinNextPaymentRequest(host, "3.30");
+      const first = randomCoins(2);
+      const second = randomCoins(2);
+      await host.injectStatement(topicFor(req.id), buildCheque(req, first).data);
+      await host.injectStatement(topicFor(req.id), buildCheque(req, second).data);
 
-    // Both arrive in the subscription's first page; the first one wins.
-    await log.waitFor(/page: 2 statement\(s\), isComplete=true/);
-    const topUp = await host.waitForTopUp({ since });
-    expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
-    expect(topUp.source).toEqual({ tag: "Coins", keys: coinsHex(first) });
-    await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
-    await waitForSale(host, req.id);
-    expect(host.all("topUp")).toHaveLength(1);
-    expect(await storedSales(host)).toHaveLength(1);
+      const since = host.mark();
+      const seen = log.mark();
+      await frame.locator('[data-testid="calc-digit-3"]').click();
+      await frame.locator('[data-testid="calc-digit-3"]').click();
+      await frame.locator('[data-testid="calc-digit-0"]').click();
+      await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("3.30");
+      await frame.locator('[data-testid="btn-charge"]').click();
+
+      await expectPinTook(host, req, since);
+      await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
+      // Both arrive in the subscription's first page; the first one wins.
+      await log.waitFor(new RegExp(`armed: id=${req.id} amount=3\\.30`), seen);
+      await log.waitFor(/page: 2 statement\(s\), isComplete=true/, seen);
+      const topUp = await host.waitForTopUp({ since });
+      expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
+      expect(topUp.source).toEqual({ tag: "Coins", keys: coinsHex(first) });
+      await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+      await expect(frame.locator('[data-testid="sale-id"]')).toHaveText(`#${req.id.slice(-4)}`);
+      await waitForSale(host, req.id);
+      expect(host.all("topUp")).toHaveLength(1);
+      expect(await storedSales(host)).toHaveLength(1);
+    });
   });
 });

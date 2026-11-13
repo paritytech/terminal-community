@@ -2,9 +2,10 @@
 // Helpers for the checkout specs: items mode on /terminal, the legacy
 // /items -> /tips -> /terminal path, and the receipt screens after a sale.
 import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import { expect, type Frame, type FrameLocator, type Locator } from "@playwright/test";
 import type { T3Host } from "../host/fixture";
-import { bootTerminal, topicHex } from "../host/flows";
+import { topicHex } from "../host/flows";
 import type { ChequeRequest } from "../host/payer";
 import type { TopUpRecord } from "../host/protocol";
 
@@ -41,17 +42,14 @@ export async function settingValue(host: T3Host, key: string): Promise<string | 
   return (await settingsRows(host)).find((r) => r.key === key)?.value;
 }
 
-/** Upsert rows into the app's settings table, the shape setSetting writes. */
-export async function seedSettings(host: T3Host, entries: Record<string, string>): Promise<void> {
-  const rows = await settingsRows(host);
-  let id = rows.reduce((m, r) => Math.max(m, r.id ?? 0), 0);
-  for (const [key, value] of Object.entries(entries)) {
-    const at = rows.findIndex((r) => r.key === key);
-    const row = { key, value, updatedAt: new Date().toISOString() };
-    if (at >= 0) rows[at] = { ...rows[at], ...row };
-    else rows.push({ id: ++id, ...row });
-  }
-  await host.seedStorage("settings", rows);
+/**
+ * Settings rows, in the shape setSetting writes, for `hostOptions.storage`:
+ * the host has them before the product boots, as if the merchant had saved
+ * them in an earlier session.
+ */
+export function settingsSeed(entries: Record<string, string>): { settings: SettingRow[] } {
+  const updatedAt = new Date().toISOString();
+  return { settings: Object.entries(entries).map(([key, value], i) => ({ id: i + 1, key, value, updatedAt })) };
 }
 
 // ── items mode ────────────────────────────────────────────────────────────
@@ -62,28 +60,28 @@ export const CATALOG: CatalogItem[] = [
   { id: "ci-croissant", name: "Croissant", price: "3.20", unit: "Each", taxRate: 10 },
 ];
 
+/** Host storage with Items mode on and `items` in the catalog (Settings > Show Items in Checkout). */
+export function itemsModeStorage(items: CatalogItem[] = CATALOG): { settings: SettingRow[] } {
+  return settingsSeed({ "checkout-items/enabled": "1", "checkout-items/list": JSON.stringify(items) });
+}
+
 /**
- * Boot the terminal, switch Items mode on with `items` in the catalog (the
- * settings Settings > Show Items in Checkout writes), restart the product and
- * wait for the item grid with the pre-flight probe running.
+ * Wait for the item grid of a product that booted with Items mode on (see
+ * itemsModeStorage), the document settled and the coins pre-flight armed.
  */
-export async function bootItemsCheckout(host: T3Host, items: CatalogItem[] = CATALOG): Promise<FrameLocator> {
-  // First boot settles the app's own boot-time writes, so the seed below
-  // cannot be overwritten by a read-modify-write that started before it.
-  await bootTerminal(host);
-  await seedSettings(host, {
-    "checkout-items/enabled": "1",
-    "checkout-items/list": JSON.stringify(items),
-  });
-  const since = host.mark();
-  await host.restartProduct("/terminal");
-  await host.next("productLoad", undefined, { since, timeout: 60_000 });
+export async function bootItemsCheckout(host: T3Host, timeout = 90_000): Promise<FrameLocator> {
+  await host.next("accountGet", undefined, { timeout });
   const frame = host.productFrame();
-  await expect(frame.getByTestId("items-charge")).toBeVisible({ timeout: 60_000 });
+  await expect(frame.getByTestId("items-charge")).toBeVisible({ timeout });
   await host.settle();
   // The coins pre-flight is armed once the payment method has loaded.
-  await host.next("balanceSubscribe", undefined, { since, timeout: 60_000 });
+  await host.next("balanceSubscribe", undefined, { timeout });
   return frame;
+}
+
+/** The on-screen receipt (the generated SVG, not the HTML fallback). */
+export function receiptSvg(frame: FrameLocator): Locator {
+  return frame.getByTestId("receipt-svg").locator("svg").first();
 }
 
 /** An item tile on the grid (a button whose text holds the name and price). */
@@ -98,10 +96,11 @@ export function cartBadge(frame: FrameLocator): Locator {
 
 /** Press the basket's Charge and wait for the cheque QR for `total`. */
 export async function chargeBasket(host: T3Host, frame: FrameLocator, total: string): Promise<ChequeRequest> {
-  const since = host.mark();
   const button = frame.getByTestId("items-charge");
   await expect(button).toHaveText(`Charge ${total} ${SYM}`);
-  await button.click();
+  const since = host.mark();
+  // The Charge runs its own pre-flight at once (the periodic one is 15 s apart).
+  await Promise.all([host.next("balanceSubscribe", undefined, { since, timeout: 1_500 }), button.click()]);
   await expect(frame.getByTestId("waiting-text")).toHaveText("Scan QR to pay", { timeout: 30_000 });
   const req = await host.readChequeRequest();
   expect(req.amount).toBe(total);
@@ -149,18 +148,52 @@ export async function openRoute(host: T3Host, path: string): Promise<void> {
 
 // ── QR decoding (zxing-wasm in Node, as a phone camera would) ────────────
 let zxingReady: Promise<typeof import("zxing-wasm/reader")> | null = null;
+async function loadZxing() {
+  const z = await import("zxing-wasm/reader");
+  const wasm = readFileSync(require.resolve("zxing-wasm/reader/zxing_reader.wasm"));
+  await z.prepareZXingModule({
+    overrides: { wasmBinary: wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength) as ArrayBuffer },
+    fireImmediately: true,
+  });
+  return z;
+}
 export async function decodeQrIn(locator: Locator): Promise<string> {
-  zxingReady ??= (async () => {
-    const z = await import("zxing-wasm/reader");
-    const wasm = readFileSync(require.resolve("zxing-wasm/reader/zxing_reader.wasm"));
-    await z.prepareZXingModule({
-      overrides: { wasmBinary: wasm.buffer.slice(wasm.byteOffset, wasm.byteOffset + wasm.byteLength) as ArrayBuffer },
-      fireImmediately: true,
-    });
-    return z;
-  })();
+  zxingReady ??= loadZxing();
   const png = await locator.screenshot();
   const [hit] = await (await zxingReady).readBarcodes(new Uint8Array(png), { formats: ["QRCode"] });
   if (!hit?.text) throw new Error("no QR in locator");
   return hit.text;
+}
+
+/** Decode a QR from raw RGB(A) pixels, e.g. an image lifted out of a PDF. */
+export async function decodeQrPixels(pixels: Uint8Array, width: number, height: number, channels: 3 | 4): Promise<string> {
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let p = 0; p < width * height; p++) {
+    rgba[p * 4] = pixels[p * channels];
+    rgba[p * 4 + 1] = pixels[p * channels + 1];
+    rgba[p * 4 + 2] = pixels[p * channels + 2];
+    rgba[p * 4 + 3] = 255;
+  }
+  zxingReady ??= loadZxing();
+  const [hit] = await (await zxingReady).readBarcodes({ data: rgba, width, height, colorSpace: "srgb" } as ImageData, { formats: ["QRCode"] });
+  if (!hit?.text) throw new Error("no QR in pixels");
+  return hit.text;
+}
+
+/**
+ * The one image XObject of a PDF (jsPDF writes the receipt as a single RGB
+ * image), with its pixels inflated when the stream is compressed.
+ */
+export function pdfImage(pdf: Buffer): { width: number; height: number; pixels: Uint8Array } {
+  const text = pdf.toString("latin1");
+  const dicts = [...text.matchAll(/<<((?:(?!>>)[\s\S])*?\/Subtype \/Image[\s\S]*?)>>\s*stream\r?\n/g)];
+  if (dicts.length !== 1) throw new Error(`expected one image in the PDF, found ${dicts.length}`);
+  const [whole, dict] = dicts[0];
+  const num = (key: string) => Number(new RegExp(`/${key} (\\d+)`).exec(dict)?.[1]);
+  if (!/\/ColorSpace \/DeviceRGB/.test(dict) || num("BitsPerComponent") !== 8) throw new Error(`unexpected image: ${dict}`);
+  const start = dicts[0].index! + whole.length;
+  let pixels: Uint8Array = pdf.subarray(start, start + num("Length"));
+  if (/\/Filter \/FlateDecode/.test(dict)) pixels = inflateSync(pixels);
+  if (/\/DecodeParms/.test(dict)) throw new Error(`predictor not supported: ${dict}`);
+  return { width: num("Width"), height: num("Height"), pixels };
 }

@@ -5,10 +5,12 @@ import {
   bootItemsCheckout,
   cartBadge,
   chargeBasket,
+  itemsModeStorage,
   openRoute,
   payAndComplete,
-  seedSettings,
+  receiptSvg,
   settingValue,
+  settingsSeed,
   tile,
   type CatalogItem,
 } from "./checkout.helpers";
@@ -21,6 +23,9 @@ import {
  */
 
 test.describe("items mode checkout", () => {
+  // The merchant switched Items mode on in an earlier session.
+  test.use({ hostOptions: { storage: itemsModeStorage() } });
+
   test("tiles, a custom amount and the basket add up to the Charge total", async ({ host }) => {
     const frame = await bootItemsCheckout(host);
 
@@ -114,7 +119,7 @@ test.describe("items mode checkout", () => {
 
     // The receipt is itemized.
     await frame.getByRole("button", { name: "Review Receipt" }).click();
-    const receipt = frame.locator("main svg").first();
+    const receipt = receiptSvg(frame);
     await expect(receipt).toContainText("2 × Espresso");
     await expect(receipt).toContainText("5.00");
     await expect(receipt).toContainText("1 × Croissant");
@@ -150,19 +155,24 @@ test.describe("items mode checkout", () => {
     await tile(frame, "Espresso").click();
     await expect(frame.getByTestId("items-charge")).toHaveText(`Charge 5.70 ${SYM}`);
 
-    // The host's payments bridge refuses the balance probe: no QR is shown.
+    // The host's payments bridge stops taking payments. The Charge probes it
+    // at once (the periodic probe is 15 s apart) and shows no QR.
+    const warning = frame.getByTestId("terminal-connectivity-warning");
+    await expect(warning).toHaveCount(0);
     await host.setBalanceMode("Unsupported");
     const since = host.mark();
-    await frame.getByTestId("items-charge").click();
-    const warning = frame.getByTestId("terminal-connectivity-warning");
+    await Promise.all([
+      host.next("balanceSubscribe", undefined, { since, timeout: 1_500 }),
+      frame.getByTestId("items-charge").click(),
+    ]);
     await expect(warning).toContainText("This Polkadot app build can't take coin payments");
-    await host.next("balanceSubscribe", undefined, { since });
     // Back on the grid with the basket intact.
     await expect(frame.getByRole("heading", { name: "All Items" })).toBeVisible();
     await expect(cartBadge(frame)).toHaveText("2");
     await expect(frame.getByTestId("items-charge")).toHaveText(`Charge 5.70 ${SYM}`);
     // No cheque was armed: no statement subscription since the Charge.
     expect(host.events.slice(since).filter((e) => e.type === "statementSubscribe")).toHaveLength(0);
+    expect(await frame.getByTestId("qr-code").count()).toBe(0);
     expect(host.all("topUp")).toHaveLength(0);
 
     // The Amount tab comes back clean (the basket's digits were dropped).
@@ -181,7 +191,9 @@ test.describe("items mode checkout", () => {
       { name: "Espresso", quantity: 1, unitPrice: "2.50" },
     ]);
   });
+});
 
+test.describe("items mode settings", () => {
   test("Settings > Show Items in Checkout: add, edit and remove items; it all survives a restart", async ({ host }) => {
     await bootTerminal(host);
     await openRoute(host, "/settings/items");
@@ -269,20 +281,19 @@ test.describe("items mode checkout", () => {
     await expect(frame.getByTestId("terminal-header")).toBeVisible();
     await expect(frame.getByTestId("items-charge")).toHaveCount(0);
   });
+});
+
+test.describe("items mode with an empty catalog", () => {
+  test.use({ hostOptions: { storage: settingsSeed({ "checkout-items/enabled": "1" }) } });
 
   test("an empty catalog points to Settings, and the Amount tab still charges", async ({ host }) => {
-    await bootTerminal(host);
-    await seedSettings(host, { "checkout-items/enabled": "1" });
-    const since = host.mark();
-    await openRoute(host, "/terminal");
-    const frame = host.productFrame();
+    const frame = await bootItemsCheckout(host);
     await expect(frame.getByText("No items yet — add them in")).toBeVisible();
     await expect(frame.getByRole("link", { name: "Settings → Show Items in Checkout" })).toHaveAttribute("href", /^\/settings\/items\/?$/);
 
     await frame.getByRole("button", { name: "Amount", exact: true }).click();
     for (const d of ["4", "0", "0"]) await frame.getByTestId(`calc-digit-${d}`).click();
     await frame.getByTestId("items-add-custom").click();
-    await host.next("balanceSubscribe", undefined, { since });
     const req = await chargeBasket(host, frame, "4.00");
     await payAndComplete(host, frame, req);
     expect((await waitForSale(host, req.id)).items).toEqual([{ name: "Custom Amount", quantity: 1, unitPrice: "4.00" }]);

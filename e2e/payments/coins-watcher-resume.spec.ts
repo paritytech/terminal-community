@@ -2,7 +2,8 @@ import { test, expect } from "../host/fixture";
 import type { T3Host } from "../host/fixture";
 import { bootTerminal, chargeAndPay, storedSales, waitForSale } from "../host/flows";
 import type { Hex, HostEvent } from "../host/protocol";
-import { coinsSaleRow, merchantAddress, topUpSubscriberCount } from "./resilience.helpers";
+import { encodeAddress } from "@polkadot/util-crypto";
+import { coinsSaleRow, merchantAddressFor } from "./resilience.helpers";
 
 /**
  * The background claim watcher across app restarts. A coins sale is recorded
@@ -18,13 +19,18 @@ async function confirmingSale(host: T3Host, amount: string) {
   await host.setTopUpScript("manual");
   const frame = await bootTerminal(host);
   const { req, topUp } = await chargeAndPay(host, frame, amount);
+  const claimed = host.mark();
   await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: false });
   await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
   const sale = await waitForSale(host, req.id);
   expect(sale.topUpId).toBe(topUp.idHex.slice(2));
   expect(sale.finalizedAt).toBeUndefined();
-  // This launch's own watcher is on the registration.
-  await expect.poll(() => topUpSubscriberCount(host, topUp.idHex)).toBe(1);
+  // This launch's background watcher opened its own subscription on the
+  // registration after the first `claimed` (the claim's one predates it)…
+  const watch = await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex, { since: claimed, timeout: 15_000 });
+  expect(watch.known).toBe(true);
+  // …and the claim let go of its own: the watcher is the only listener.
+  await expect.poll(() => host.topUpSubscriberCount(topUp.idHex)).toBe(1);
   return { frame, req, topUp };
 }
 
@@ -51,8 +57,6 @@ test.describe("coins watcher — resume after a restart", () => {
     // TopUpWatcherBoot subscribes to the stored id — the host still knows it.
     const resumed = await host.next("topUpStatusSubscribe", (e) => e.idHex === topUp.idHex, { since, timeout: 30_000 });
     expect(resumed.known).toBe(true);
-    // The old document's watcher is gone; only the resumed one listens.
-    await expect.poll(() => topUpSubscriberCount(host, topUp.idHex)).toBe(1);
 
     const frame = host.productFrame();
     const row = frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`);
@@ -141,8 +145,10 @@ test.describe("coins watcher — resume after a restart", () => {
     expect(subscribesTo(host, topUp.idHex, since)).toHaveLength(1);
   });
 
-  test("seeded confirming sales are resumed on boot; settled ones are not watched", async ({ host }) => {
-    const merchant = await merchantAddress(host);
+  test.describe("seeded before boot", () => {
+    // Sales a previous launch left behind, in host storage before the product
+    // loads (hostOptions), so the very first launch is the one that resumes.
+    const merchant = merchantAddressFor("Bob");
     const yesterday = new Date(Date.now() - 60_000).toISOString();
     const confirming = coinsSaleRow(merchant, { id: 1, amount: "4.00" });
     const finalized = coinsSaleRow(merchant, { id: 2, amount: "5.00", finalizedAt: yesterday });
@@ -151,31 +157,46 @@ test.describe("coins watcher — resume after a restart", () => {
       id: 4, amount: "1.00", requestedAmount: "8.00", requestedAmountPlanck: "8000000", finalizedAt: yesterday,
     });
     const confirming2 = coinsSaleRow(merchant, { id: 5, amount: "9.00" });
-    await host.seedStorage("sales", [confirming, finalized, reverted, partial, confirming2]);
-    await host.restartProduct("/history");
+    test.use({
+      hostOptions: {
+        root: "Bob",
+        initialPath: "/history",
+        storage: { sales: [confirming, finalized, reverted, partial, confirming2] },
+      },
+    });
 
-    await bootHistory(host);
-    // Every sale still confirming gets a watch, on its own stored id…
-    for (const s of [confirming, confirming2]) {
-      await host.next("topUpStatusSubscribe", (e) => e.idHex === `0x${s.topUpId}`, { timeout: 30_000 });
-    }
-    const frame = host.productFrame();
-    const rowOf = (id: string) => frame.locator(`[data-testid="history-row-${id.slice(-4)}"]`);
-    await expect(rowOf(confirming.saleId)).toHaveAttribute("data-claim-state", "confirming");
-    await expect(rowOf(confirming2.saleId)).toHaveAttribute("data-claim-state", "confirming");
-    await expect(rowOf(finalized.saleId)).toHaveAttribute("data-claim-state", "received");
-    await expect(rowOf(reverted.saleId)).toHaveAttribute("data-claim-state", "reverted");
-    await expect(rowOf(partial.saleId)).toHaveAttribute("data-claim-state", "partial");
-    await expect(rowOf(partial.saleId).locator('[data-testid="history-row-status"]')).toContainText("Received 1.00 of 8.00");
+    test("seeded confirming sales are resumed on boot; settled ones are not watched", async ({ host }) => {
+      // The rows are filed under the account this host hands the product.
+      expect(merchant).toBe(encodeAddress(Buffer.from((await host.merchantPublicKey(0)).slice(2), "hex"), 42));
+      await bootHistory(host);
+      // Every sale still confirming gets a watch, on its own stored id…
+      for (const s of [confirming, confirming2]) {
+        await host.next("topUpStatusSubscribe", (e) => e.idHex === `0x${s.topUpId}`, { timeout: 30_000 });
+      }
+      const frame = host.productFrame();
+      const rowOf = (id: string) => frame.locator(`[data-testid="history-row-${id.slice(-4)}"]`);
+      await expect(rowOf(confirming.saleId)).toHaveAttribute("data-claim-state", "confirming");
+      await expect(rowOf(confirming2.saleId)).toHaveAttribute("data-claim-state", "confirming");
+      await expect(rowOf(finalized.saleId)).toHaveAttribute("data-claim-state", "received");
+      await expect(rowOf(reverted.saleId)).toHaveAttribute("data-claim-state", "reverted");
+      await expect(rowOf(partial.saleId)).toHaveAttribute("data-claim-state", "partial");
+      await expect(rowOf(partial.saleId).locator('[data-testid="history-row-status"]')).toContainText("Received 1.00 of 8.00");
 
-    // …and the settled ones get none. resumePendingTopUpWatches arms every
-    // watch in one pass, so once both confirming ids are in, the set is whole.
-    const watched = new Set(host.all("topUpStatusSubscribe").map((e) => e.idHex));
-    for (const s of [finalized, reverted, partial]) expect(watched.has(`0x${s.topUpId}` as Hex)).toBe(false);
-    expect(watched.size).toBe(2);
-    // These ids were never registered with this host: NotFound, rows untouched.
-    expect(host.all("topUpStatusSubscribe").every((e) => !e.known)).toBe(true);
-    expect(host.all("topUp")).toHaveLength(0);
+      // …and the settled ones get none. resumePendingTopUpWatches arms every
+      // watch in one pass, so once both confirming ids are in, the set is whole.
+      const watched = new Set(host.all("topUpStatusSubscribe").map((e) => e.idHex));
+      for (const s of [finalized, reverted, partial]) expect(watched.has(`0x${s.topUpId}` as Hex)).toBe(false);
+      expect(watched.size).toBe(2);
+      // These ids were never registered with this host: NotFound, rows untouched.
+      expect(host.all("topUpStatusSubscribe").every((e) => !e.known)).toBe(true);
+      expect(host.all("topUp")).toHaveLength(0);
+      const stored = await storedSales(host);
+      for (const s of [confirming, confirming2]) {
+        const row = stored.find((r) => r.saleId === s.saleId)!;
+        expect(row.finalizedAt).toBeUndefined();
+        expect(row.revertedAt).toBeUndefined();
+      }
+    });
   });
 
   test("a reload mid-claim still records the sale once the host claims it", async ({ host }) => {

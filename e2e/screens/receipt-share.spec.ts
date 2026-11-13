@@ -1,6 +1,14 @@
+import type { Download } from "@playwright/test";
 import { test, expect, type T3Host } from "../host/fixture";
 import { bootTerminal, chargeAndPay, waitForSale } from "../host/flows";
-import { SYM, decodeQrIn, productFrameHandle } from "../payments/checkout.helpers";
+import {
+  SYM,
+  decodeQrIn,
+  decodeQrPixels,
+  pdfImage,
+  productFrameHandle,
+  receiptSvg,
+} from "../payments/checkout.helpers";
 
 /**
  * The screens after a coins sale: the receipt review (the SVG receipt the
@@ -20,15 +28,41 @@ async function completedSale(host: T3Host, amount: string, note?: string) {
   return { frame, req, topUp, last4 };
 }
 
+async function readDownload(download: Download): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
+
+/**
+ * A whole receipt PDF: one page on an 80 mm roll (226.77 pt wide) carrying
+ * the receipt as one image, whose QR scans to this sale's receipt envelope.
+ */
+async function expectReceiptPdf(pdf: Buffer, saleId: string, amount: string) {
+  expect(pdf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+  expect(pdf.subarray(-8).toString("latin1")).toMatch(/%%EOF\s*$/);
+  const text = pdf.toString("latin1");
+  expect(text.match(/\/Type \/Page\b/g)).toHaveLength(1);
+  expect(text).toMatch(/\/MediaBox \[0 0 226\.77/);
+  const { width, height, pixels } = pdfImage(pdf);
+  const scanned = new URL((await decodeQrPixels(pixels, width, height, 3)).replace(/^polkadotapp:\/\//, "https://"));
+  expect(scanned.pathname).toBe("/r");
+  expect(scanned.searchParams.get("id")).toBe(saleId);
+  expect(scanned.searchParams.get("a")).toBe(amount);
+  expect(scanned.searchParams.get("as")).toBe(SYM);
+}
+
 test.describe("receipt and share after a sale", () => {
   test("Review Receipt shows the record number and amount; Close returns to the sale", async ({ host }) => {
     const { frame, req, last4 } = await completedSale(host, "7.40");
+    expect((await waitForSale(host, req.id)).amount).toBe("7.40");
 
+    const since = host.mark();
     await frame.getByRole("button", { name: "Review Receipt" }).click();
     await expect(frame.getByText(`Payment Record #${last4}`, { exact: true })).toBeVisible();
     // The receipt is the generated SVG (not the HTML fallback): record number
     // upper-cased, the full sale id, one "Amount" line, Total and Paid.
-    const receipt = frame.locator("main svg").first();
+    const receipt = receiptSvg(frame);
     await expect(receipt).toBeVisible();
     await expect(receipt).toContainText("RECORD");
     await expect(receipt).toContainText(`#${last4.toUpperCase()}`);
@@ -43,9 +77,10 @@ test.describe("receipt and share after a sale", () => {
     await frame.getByRole("button", { name: "Close receipt" }).click();
     await expect(frame.getByTestId("payment-completed")).toBeVisible();
     await expect(frame.getByTestId("sale-id")).toHaveText(`#${last4}`);
-    // Reviewing the receipt wrote nothing new.
-    const sale = await waitForSale(host, req.id);
-    expect(sale.amount).toBe("7.40");
+    // Reviewing the receipt wrote nothing new: no storage write, no new
+    // registration, since before Review Receipt.
+    expect(host.events.slice(since).filter((e) => e.type === "storageWrite")).toEqual([]);
+    expect(host.events.slice(since).filter((e) => e.type === "topUp")).toEqual([]);
   });
 
   test("the receipt note shows on the sale and on its receipt", async ({ host }) => {
@@ -58,7 +93,7 @@ test.describe("receipt and share after a sale", () => {
     expect((await waitForSale(host, req.id)).note).toBe("Gift wrap");
 
     await frame.getByRole("button", { name: "Review Receipt" }).click();
-    const receipt = frame.locator("main svg").first();
+    const receipt = receiptSvg(frame);
     await expect(receipt).toContainText("5.10");
     await expect(receipt).toContainText("Gift wrap", { timeout: 5_000 });
   });
@@ -75,7 +110,7 @@ test.describe("receipt and share after a sale", () => {
         ext: {
           files: {
             save: async (name: string, base64: string, mime: string) => {
-              (w.__saved as unknown[]).push({ name, mime, head: base64.slice(0, 8), size: base64.length });
+              (w.__saved as unknown[]).push({ name, mime, base64 });
               return { savedAs: `/Download/${name}` };
             },
           },
@@ -89,27 +124,27 @@ test.describe("receipt and share after a sale", () => {
     const saved = () =>
       productFrameHandle(host).evaluate(() => (window as unknown as { __saved: unknown[] }).__saved);
     await expect.poll(async () => (await saved()).length, { timeout: 30_000 }).toBe(1);
-    const [file] = (await saved()) as Array<{ name: string; mime: string; head: string; size: number }>;
+    const [file] = (await saved()) as Array<{ name: string; mime: string; base64: string }>;
     expect(file.name).toBe(`receipt-${req.id.slice(0, 8)}.pdf`);
     expect(file.mime).toBe("application/pdf");
-    expect(file.head.startsWith("JVBERi0")).toBe(true); // "%PDF-"
-    expect(file.size).toBeGreaterThan(1_000);
+    await expectReceiptPdf(Buffer.from(file.base64, "base64"), req.id, "12.00");
     // Still on the receipt.
     await expect(frame.getByText(`Payment Record #${req.id.slice(-4)}`)).toBeVisible();
   });
 
-  // Needs a host change: the test host's product <iframe> sandbox has no
-  // `allow-downloads`, so Chromium drops the anchor download and Playwright
-  // never sees a `download` event (checked: none within 15 s). With
-  // e2e/host/fixture.ts hostHtml() adding `allow-downloads` to the sandbox,
-  // this test can assert page.waitForEvent("download") ->
-  // suggestedFilename() === `receipt-<id[0..8]>.pdf`.
-  test.fixme("Download receipt without a files bridge falls back to a browser download", async ({ host }) => {
+  test("Download receipt without a files bridge falls back to a browser download", async ({ host }) => {
     const { frame, req } = await completedSale(host, "3.30");
     await frame.getByRole("button", { name: "Review Receipt" }).click();
-    const download = host.page.waitForEvent("download", { timeout: 30_000 });
-    await frame.getByRole("button", { name: "Download receipt" }).click();
-    expect((await download).suggestedFilename()).toBe(`receipt-${req.id.slice(0, 8)}.pdf`);
+    await expect(receiptSvg(frame)).toContainText("3.30");
+
+    const [download] = await Promise.all([
+      host.page.waitForEvent("download", { timeout: 30_000 }),
+      frame.getByRole("button", { name: "Download receipt" }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe(`receipt-${req.id.slice(0, 8)}.pdf`);
+    await expectReceiptPdf(await readDownload(download), req.id, "3.30");
+    // Still on the receipt.
+    await expect(frame.getByText(`Payment Record #${req.id.slice(-4)}`)).toBeVisible();
   });
 
   test("Share receipt QR shows a scannable receipt envelope; Back returns to the sale", async ({ host }) => {

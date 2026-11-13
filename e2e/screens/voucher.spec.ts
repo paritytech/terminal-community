@@ -6,8 +6,18 @@ import { setting } from "./settings.helpers";
  * Voucher (the `standard` pUSD method). It settles by watching the chain
  * itself, and the test host serves no chain (featureSupported → false), so
  * the terminal must refuse to show a QR it could never settle. The voucher
- * flow is not in product use (lib/storage/sale-state.ts); this only pins the
- * offline guard. A served chain is phase 2 (e2e/fake-chain).
+ * flow is not in product use (lib/storage/sale-state.ts); this pins the
+ * offline guard only.
+ *
+ * Why the plan's "Voucher yields a non-cheque QR (polkadotapp://pay?…)" check
+ * is not here: Charge runs startPayment() (app/(shell)/terminal/page.tsx),
+ * which awaits connectivity.check() before it sets the amount the voucher
+ * QR is built from. For Voucher that probe is isChainReachable — a best-block
+ * read on Asset Hub — and with no chain it can only answer "offline" (after
+ * its 6 s timeout), so the QR is never rendered. The only gap is the moment
+ * before the payment-method setting loads, when nothing is probed and a
+ * Charge would pass; that is a boot race, not a route a test should rely on.
+ * The QR becomes reachable with a served chain (phase 2, e2e/fake-chain).
  */
 
 test.describe("voucher method without a chain", () => {

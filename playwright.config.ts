@@ -2,9 +2,11 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: false,
-  workers: 1, // Serial — shared blockchain state
-  timeout: 120_000, // 2 min per test — chain transactions are slow
+  // Every test gets its own test host (e2e/host): host state, storage and
+  // payments are per page, and no chain is involved, so tests run in parallel.
+  fullyParallel: true,
+  workers: process.env.CI ? 2 : undefined,
+  timeout: 120_000, // generous: the first hit on a route waits for next dev to compile it
   expect: {
     timeout: 30_000,
   },

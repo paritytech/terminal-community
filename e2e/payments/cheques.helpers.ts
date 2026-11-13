@@ -42,18 +42,20 @@ export function productFrameHandle(host: T3Host): Frame {
  * BEFORE the terminal subscribes to its topic. Makes the product's next
  * 32-byte `crypto.getRandomValues` (the entropy label) and next 16-byte one
  * (the payment id) return known bytes; every other call passes through.
- * With host entropy switched off the label itself is the X25519 private key
- * (the CSPRNG fallback in lib/payments/coinage/keys.ts). The spec must check
- * the pin took (the host's entropy event carries the label, and the sale and
- * topUp carry the id).
+ *
+ * The label is the X25519 private key only when the host refuses to derive
+ * entropy (the CSPRNG fallback in lib/payments/coinage/keys.ts), so the spec
+ * must boot with `hostOptions: { entropyMode: "error" }`. The stub lives in
+ * the current product document: after the Charge, call `expectPinTook` to
+ * prove the document was not replaced and the label really reached the host.
  */
 export async function pinNextPaymentRequest(
   host: T3Host,
   amount: string,
-): Promise<ChequeRequest & { label: Uint8Array }> {
+): Promise<ChequeRequest & { label: Uint8Array; pinnedAt: number }> {
   const label = crypto.getRandomValues(new Uint8Array(32));
   const idBytes = crypto.getRandomValues(new Uint8Array(16));
-  await host.setEntropyMode("error");
+  const pinnedAt = host.mark();
   await productFrameHandle(host).evaluate(
     ({ label, idBytes }) => {
       const original = crypto.getRandomValues.bind(crypto);
@@ -76,7 +78,23 @@ export async function pinNextPaymentRequest(
     key: x25519.getPublicKey(label),
     raw: "",
     label,
+    pinnedAt,
   };
+}
+
+/**
+ * After the Charge: the host was asked for entropy with the pinned label, and
+ * no product document loaded since the pin (a reload would have dropped the
+ * stub). The spec still checks the pinned id on the topUp and the sale.
+ */
+export async function expectPinTook(
+  host: T3Host,
+  req: Awaited<ReturnType<typeof pinNextPaymentRequest>>,
+  since: number,
+) {
+  const entropy = await host.next("entropy", undefined, { since });
+  expect(entropy.keyHex, "the pinned label was the entropy key").toBe("0x" + Buffer.from(req.label).toString("hex"));
+  expect(host.events.slice(req.pinnedAt).filter((e) => e.type === "productLoad"), "product reloaded after the pin").toHaveLength(0);
 }
 
 /** A random X25519 public key nobody holds the secret for. */
