@@ -62,6 +62,12 @@ import {
 import { isHostPrinterAvailable, printHostDocument } from "@/lib/host/printing";
 import { publishNfcPaymentDeeplink, stopNfcEmitting } from "@/lib/host/nfc";
 import { watchTopUpFinality } from "@/lib/payments/coinage/topup-watcher";
+import {
+  coinsSaleRecord,
+  dropPendingClaim,
+  savePendingClaim,
+  type CoinsSaleDraft,
+} from "@/lib/payments/coinage/pending-claims";
 import { buildCustomerReceiptPrintDocument } from "@/lib/receipts/thermal-print";
 import { businessProfileFromAdminPayload } from "@/lib/config/business";
 import { mergeMerchantBusinessProfile, useMerchantProfile } from "@/lib/config/merchant";
@@ -437,6 +443,25 @@ function TerminalPageInner() {
   // customer — and, unless the host already reported it final, WITHOUT
   // `finalizedAt`: a reorg can still shrink or undo the claim, so the
   // background watcher follows the host's top-up id to its last word.
+  // What a coins sale records besides the claim's outcome. Persisted with the
+  // pending claim before registration, so a restart can still record it.
+  const coinsSaleDraft = (): CoinsSaleDraft => {
+    const merchant = receivingAddress ? normalizeToAssetHubAddress(receivingAddress) : "";
+    const items: ReceiptItem[] = pendingItems.map((line) => ({
+      name: line.name,
+      quantity: line.quantity,
+      unitPrice: formatAmountFromPlanck(line.pricePlanks, PUSD_DECIMALS),
+    }));
+    return {
+      asset: getAssetSymbol(),
+      assetId: ASSET_ID_STR,
+      merchantAddress: merchant,
+      items: items.length > 0 ? items : undefined,
+      tip: tipDecimal,
+      note: note.trim() || undefined,
+    };
+  };
+
   const handleCoinsPaid = async (result: CoinagePaymentResult) => {
     journeyTracker.milestone("terminal-payment", "payment-detected");
     journeyTracker.addAttributes("terminal-payment", {
@@ -473,33 +498,9 @@ function TerminalPageInner() {
     }));
 
     try {
-      await addSale({
-        saleId: result.paymentId,
-        amount: result.amount,
-        amountPlanck,
-        asset: getAssetSymbol(),
-        assetId: ASSET_ID_STR,
-        merchantAddress: normalizedMerchant,
-        customerAddress: "anonymous",
-        merchantAddressNormalized: normalizedMerchant,
-        customerAddressNormalized: "anonymous",
-        transactionHash: result.paymentId,
-        blockNumber: 0,
-        blockHash: result.paymentId,
-        timestamp: receivedAt,
-        // Final only when the host said so (or the claim settled partially,
-        // which is final). Otherwise the watcher stamps it later.
-        finalizedAt: result.finalized ? new Date() : undefined,
-        topUpId: result.topUpId,
-        requestedAmount: result.partial ? result.requestedAmount : undefined,
-        requestedAmountPlanck: result.partial
-          ? amountToPlanck(result.requestedAmount, PUSD_DECIMALS).toString()
-          : undefined,
-        type: "incoming",
-        items: receiptItems.length > 0 ? receiptItems : undefined,
-        tip: tipDecimal,
-        note: note.trim() || undefined,
-      });
+      await addSale(coinsSaleRecord(coinsSaleDraft(), result, receivedAt));
+      // Recorded: the pending claim kept for a restart has done its job.
+      await dropPendingClaim(result.paymentId);
       journeyTracker.milestone("terminal-payment", "sale-saved");
       if (!result.finalized) {
         // Fire-and-forget: survives this page unmounting, and is re-armed on
@@ -556,6 +557,7 @@ function TerminalPageInner() {
           onPaid: (result) => {
             void handleCoinsPaid(result);
           },
+          onClaimStarting: (claim) => savePendingClaim({ ...claim, draft: coinsSaleDraft() }),
         }
       : null,
   );

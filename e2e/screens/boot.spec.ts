@@ -187,7 +187,7 @@ test.describe("boot", () => {
     test.describe("fills up mid-session", () => {
       test.use({ hostOptions: { topUpScript: FINAL_AT_ONCE } });
 
-      test("the sale's own write is refused, and the sale still shows from memory", async ({ host, page }) => {
+      test("the sale's writes are refused, and the sale still shows from memory", async ({ host, page }) => {
         const warnings: string[] = [];
         page.on("console", (m) => { if (m.type() === "warning") warnings.push(m.text()); });
         const frame = await bootTerminal(host);
@@ -200,9 +200,10 @@ test.describe("boot", () => {
         const { req } = await chargeAndPay(host, frame, "3.20");
         await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
 
-        // The app tried to store the sale on the host and was refused…
+        // The app tried to store the sale on the host and was refused: its
+        // first write is the pending claim it keeps before registering…
         const refused = await host.next("storageWriteRejected", undefined, { since });
-        expect(refused).toEqual({ type: "storageWriteRejected", key: "sales", mode: "Full" });
+        expect(refused).toEqual({ type: "storageWriteRejected", key: "pendingClaims", mode: "Full" });
         await expect.poll(() => warnings.some((w) => w.startsWith(DEMOTED))).toBe(true);
 
         // …and kept it in memory: History and Home still show it.
