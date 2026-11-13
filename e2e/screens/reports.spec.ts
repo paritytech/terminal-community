@@ -251,12 +251,11 @@ test.describe("reports", () => {
     await expect(frame.getByText("Report Summary")).toHaveCount(0);
     await expect(frame.getByText("9.90 CASH")).toHaveCount(0);
 
-    // With no key: the encrypted-report error. Settings → Clear cannot be
-    // used for this — it asks through window.confirm, which the sandboxed
-    // product frame ignores (see merchant-and-settings.spec.ts, test.fail) —
-    // so the key is removed from the product's own localStorage, where
-    // lib/crypto/manual-key.ts keeps it.
-    await frame.locator("body").evaluate(() => localStorage.removeItem("t3rminal:manual-encryption-passphrase"));
+    // With no key: the encrypted-report error. Clear the key the way a
+    // merchant would, in Settings → Report Encryption.
+    frame = await restartOn(host, "/settings/encryption");
+    await frame.getByRole("button", { name: "Clear" }).click();
+    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible();
     frame = await restartOn(host, "/daily-reports");
     await frame.locator('[data-testid="report-view-0"]').click();
     await expect(
