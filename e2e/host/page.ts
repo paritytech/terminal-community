@@ -76,6 +76,8 @@ let accountGetMode: AccountGetMode = cfg.accountGetMode ?? "ok";
 let storageMode: StorageMode = cfg.storageMode ?? "ok";
 let entropyMode: "derive" | "error" = cfg.entropyMode ?? "derive";
 const topUpAnswers: Array<{ answer: TopUpAnswer; times: number }> = [];
+let statementHold = false;
+const heldStatementSubscriptions: Array<() => void> = [];
 let topUpScript: TopUpScript = cfg.topUpScript ?? [
   { status: { tag: "Detecting" }, afterMs: 50 },
   { status: { tag: "Claiming" }, afterMs: 150 },
@@ -223,17 +225,27 @@ function wire(container: Container, productId: string): void {
       const have = s.topics.map(hex);
       return filter.tag === "MatchAll" ? want.every((t) => have.includes(t)) : want.some((t) => have.includes(t));
     };
-    // replay what the store already holds — a cheque injected before the
-    // terminal subscribed must still be seen (real store semantics)
-    send({ statements: statements.filter(matches), isComplete: true });
-    const off = track(statementSubs, {
-      gen: generation,
-      matches,
-      topics: want,
-      send: (s) => send({ statements: [s], isComplete: true }),
-    });
+    let off: (() => void) | null = null;
+    let closed = false;
+    const open = () => {
+      if (closed) return;
+      // replay what the store already holds — a cheque injected before the
+      // terminal subscribed must still be seen (real store semantics)
+      send({ statements: statements.filter(matches), isComplete: true });
+      off = track(statementSubs, {
+        gen: generation,
+        matches,
+        topics: want,
+        send: (s) => send({ statements: [s], isComplete: true }),
+      });
+    };
+    // While held, the subscription opens only on release (see
+    // holdStatementSubscriptions): lets a spec post a cheque first.
+    if (statementHold) heldStatementSubscriptions.push(open);
+    else open();
     return () => {
-      off();
+      closed = true;
+      off?.();
       emit({ type: "statementUnsubscribe", topics: want });
     };
   });
@@ -401,6 +413,11 @@ function createControl(iframe: HTMLIFrameElement) {
       statementSubs.forEach((sub) => sub.matches(s) && sub.send(s));
     },
     clearStatements() { statements.length = 0; },
+    /** Hold new statement subscriptions unopened; releasing opens them (with replay). */
+    holdStatementSubscriptions(hold: boolean) {
+      statementHold = hold;
+      if (!hold) heldStatementSubscriptions.splice(0).forEach((open) => open());
+    },
     // balance
     setBalance(planck: string) { balance = BigInt(planck); balanceSubs.forEach((s) => s.send({ available: balance })); },
     setBalanceMode(m: BalanceMode) { balanceMode = m; },

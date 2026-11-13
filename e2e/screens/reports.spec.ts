@@ -64,10 +64,20 @@ const keyOf = (text: string) => "0x" + Buffer.from(blake2b(Buffer.from(text, "ut
 async function openReports(host: T3Host, amounts: string[]): Promise<{ frame: FrameLocator; sales: SeededSale[] }> {
   const frame = await bootTerminal(host);
   const sales = amounts.length ? await seedTodaysSales(host, amounts) : [];
-  await frame.getByRole("link", { name: "Home", exact: true }).click();
-  await frame.getByRole("link", { name: "Reports" }).click();
-  await expect(frame.getByText("X-Report", { exact: true })).toBeVisible();
+  await gotoReportsFromHome(frame, () => frame.getByRole("link", { name: "Home", exact: true }).click());
   return { frame, sales };
+}
+
+/**
+ * Leave for Home, wait until Home is really on screen, then open Reports.
+ * Clicking "Reports" while the previous page is still up can hit one of its
+ * own links ("Back to reports", "Recover Reports").
+ */
+async function gotoReportsFromHome(frame: FrameLocator, leave: () => Promise<void>) {
+  await leave();
+  await expect(frame.getByTestId("todays-income")).toBeVisible();
+  await frame.getByRole("link", { name: "Reports", exact: true }).click();
+  await expect(frame.getByText("X-Report", { exact: true })).toBeVisible();
 }
 
 /** The global report-job toast (ReportJobProvider). */
@@ -154,8 +164,7 @@ test.describe("reports", () => {
     // A sale after the close starts period #02.
     const [late] = await seedTodaysSales(host, ["2.00"]);
     // The screen re-reads sales on the app's own writes only; remount it.
-    await frame.getByRole("link", { name: "Back to home" }).click();
-    await frame.getByRole("link", { name: "Reports" }).click();
+    await gotoReportsFromHome(frame, () => frame.getByRole("link", { name: "Back to home" }).click());
     await frame.getByRole("button", { name: "Current report", exact: true }).click();
     await expect(frame.getByText("Saves the current 1 transactions")).toBeVisible();
     const since2 = host.mark();

@@ -150,6 +150,12 @@ export class T3Host {
     await this.injectStatement(topic, data);
     return { req, coins };
   }
+  /**
+   * Hold new statement subscriptions unopened until released: the terminal
+   * shows its QR before it subscribes, so a spec can post the cheque first and
+   * see it arrive through the store's replay on release.
+   */
+  holdStatementSubscriptions(hold: boolean) { return this.call("holdStatementSubscriptions", hold); }
   /** Inject a statement with arbitrary data on `id`'s payment topic. */
   injectRaw(topic: Uint8Array, data: Uint8Array) {
     return this.injectStatement(topic, data);

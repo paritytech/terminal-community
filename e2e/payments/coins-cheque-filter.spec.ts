@@ -1,7 +1,8 @@
-import { test, expect } from "../host/fixture";
-import { bootTerminal, charge, chargeAndPay, hexOf, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
+import { test, expect, type T3Host } from "../host/fixture";
+import type { FrameLocator } from "@playwright/test";
+import { bootTerminal, charge, chargeAndPay, enterAmount, hexOf, planck, storedSales, topicHex, topUpIdHex, waitForSale } from "../host/flows";
 import { buildCheque, randomCoins, topicFor, type ChequeRequest } from "../host/payer";
-import { coinageLog, coinsHex, expectPinTook, pinNextPaymentRequest, strangerKey } from "./cheques.helpers";
+import { coinageLog, coinsHex, strangerKey } from "./cheques.helpers";
 
 /**
  * The terminal listens on its payment topic, where anyone can post. Only a
@@ -182,37 +183,37 @@ test.describe("coins cheque filter — one sale, one claim", () => {
     });
   });
 
-  // The pinned request's key is the label itself only when the host refuses
-  // to derive entropy (the CSPRNG fallback in lib/payments/coinage/keys.ts).
-  test.describe("with host entropy unavailable", () => {
-    test.use({ hostOptions: { entropyMode: "error" } });
+  // The terminal shows its QR before it subscribes to the payment topic. With
+  // the host holding new subscriptions, the customer pays first, and the
+  // cheque reaches the terminal through the store's replay on release, as it
+  // would from a real store that already holds it.
+  test.describe("cheques already in the store", () => {
+    /** Charge with the host holding the subscription; returns the QR's request. */
+    async function chargeBeforeSubscribe(host: T3Host, frame: FrameLocator, amount: string) {
+      await host.holdStatementSubscriptions(true);
+      const since = host.mark();
+      await enterAmount(frame, amount);
+      await frame.locator('[data-testid="btn-charge"]').click();
+      const req = await host.readChequeRequest();
+      // The subscription was asked for but is not open yet.
+      await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
+      expect(await host.statementSubscriberCount(topicHex(req.id))).toBe(0);
+      return { req, since };
+    }
 
     test("a cheque posted before the terminal subscribes is replayed and claimed", async ({ host }) => {
       const log = coinageLog(host);
       const frame = await bootTerminal(host);
-      // Fix the next request's id and key so the customer can pay it before the
-      // terminal is even listening (the store keeps it, like the real one).
-      const req = await pinNextPaymentRequest(host, "5.75");
+      const seen = log.mark();
+      const { req, since } = await chargeBeforeSubscribe(host, frame, "5.75");
       const coins = randomCoins(2);
       const { topic, data } = buildCheque(req, coins);
       await host.injectStatement(topic, data);
+      expect(host.events.slice(since).filter((e) => e.type === "topUp")).toHaveLength(0);
 
-      const since = host.mark();
-      const seen = log.mark();
-      await frame.locator('[data-testid="calc-digit-5"]').click();
-      await frame.locator('[data-testid="calc-digit-7"]').click();
-      await frame.locator('[data-testid="calc-digit-5"]').click();
-      await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("5.75");
-      await frame.locator('[data-testid="btn-charge"]').click();
-
-      // The pinned label really was the key material, and the subscription to
-      // the pinned id's topic opened only AFTER the cheque was posted.
-      await expectPinTook(host, req, since);
-      await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
+      await host.holdStatementSubscriptions(false);
       // It came in the subscription's first page (the store's replay).
-      await log.waitFor(new RegExp(`armed: id=${req.id} amount=5\\.75`), seen);
       await log.waitFor(/page: 1 statement\(s\), isComplete=true/, seen);
-
       const topUp = await host.waitForTopUp({ since });
       expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
       expect(topUp.amount).toBe(planck("5.75").toString());
@@ -228,24 +229,15 @@ test.describe("coins cheque filter — one sale, one claim", () => {
     test("two valid cheques already in the store reach the terminal in one page and are claimed once", async ({ host }) => {
       const log = coinageLog(host);
       const frame = await bootTerminal(host);
-      const req = await pinNextPaymentRequest(host, "3.30");
+      const seen = log.mark();
+      const { req, since } = await chargeBeforeSubscribe(host, frame, "3.30");
       const first = randomCoins(2);
       const second = randomCoins(2);
       await host.injectStatement(topicFor(req.id), buildCheque(req, first).data);
       await host.injectStatement(topicFor(req.id), buildCheque(req, second).data);
 
-      const since = host.mark();
-      const seen = log.mark();
-      await frame.locator('[data-testid="calc-digit-3"]').click();
-      await frame.locator('[data-testid="calc-digit-3"]').click();
-      await frame.locator('[data-testid="calc-digit-0"]').click();
-      await expect(frame.locator('[data-testid="amount-display"]')).toHaveText("3.30");
-      await frame.locator('[data-testid="btn-charge"]').click();
-
-      await expectPinTook(host, req, since);
-      await host.next("statementSubscribe", (e) => e.topics.includes(topicHex(req.id)), { since });
+      await host.holdStatementSubscriptions(false);
       // Both arrive in the subscription's first page; the first one wins.
-      await log.waitFor(new RegExp(`armed: id=${req.id} amount=3\\.30`), seen);
       await log.waitFor(/page: 2 statement\(s\), isComplete=true/, seen);
       const topUp = await host.waitForTopUp({ since });
       expect(topUp.idHex).toBe(topUpIdHex(req.id, 1));
