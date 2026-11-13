@@ -96,7 +96,7 @@ export default function ReportsPage() {
             </div>
 
             {error && (
-              <p className="text-red-400 text-xs mb-3">{error}</p>
+              <p data-testid="report-error" className="text-red-400 text-xs mb-3">{error}</p>
             )}
 
             <button

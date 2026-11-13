@@ -65,7 +65,7 @@ export default function WalletSettingsPage() {
                     <Coins className="w-4 h-4 text-white" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-white font-semibold text-lg leading-tight truncate">
+                    <p data-testid="wallet-balance" className="text-white font-semibold text-lg leading-tight truncate">
                       {balanceLabel}
                     </p>
                     <p className="text-neutral-500 text-xs">

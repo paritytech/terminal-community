@@ -132,7 +132,7 @@ export default function RecoverReportsPage() {
                 </section>
               ))}
               {state === "error" && (
-                <p className="text-red-400 text-sm text-center py-4">{error}</p>
+                <p data-testid="report-error" className="text-red-400 text-sm text-center py-4">{error}</p>
               )}
             </>
           )}

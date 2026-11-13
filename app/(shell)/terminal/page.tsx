@@ -1341,6 +1341,8 @@ function TerminalPageInner() {
                   the card needing a white fill. */}
               <div
                 data-testid="qr-code"
+                // The value the QR encodes, for tests that play the payer.
+                data-qr-value={!paymentIncoming && !claimFailed ? displayQrValue || undefined : undefined}
                 className="rounded-container overflow-hidden bg-surface-nested"
               >
                 {paymentIncoming ? (
@@ -1399,6 +1401,7 @@ function TerminalPageInner() {
                 {canCancelTransaction && (
                   <Button
                     variant="secondary"
+                    data-testid="btn-cancel-transaction"
                     onClick={() => setShowCancelModal(true)}
                     className={`w-full h-auto py-3.5 text-label-m ${generating ? "text-fg-error" : ""}`}
                   >
@@ -1415,7 +1418,7 @@ function TerminalPageInner() {
             restyled here and is flagged for that redesign. */}
         {showCancelModal && (
           <div className="fixed inset-0 bg-surface-overlay flex items-center justify-center z-50 px-6">
-            <div className="bg-surface-container rounded-container shadow-3 w-full max-w-sm p-6">
+            <div data-testid="cancel-modal" className="bg-surface-container rounded-container shadow-3 w-full max-w-sm p-6">
               <p className="text-heading-l text-fg-primary text-center mb-6">
                 Do you want to cancel
                 <br />
@@ -1425,6 +1428,7 @@ function TerminalPageInner() {
               <div className="flex gap-3">
                 <Button
                   variant="secondary"
+                  data-testid="btn-cancel-modal-close"
                   onClick={() => setShowCancelModal(false)}
                   className="flex-1 h-auto py-3.5 text-label-m"
                 >
@@ -1432,6 +1436,7 @@ function TerminalPageInner() {
                 </Button>
                 <Button
                   variant="destructive"
+                  data-testid="btn-cancel-modal-confirm"
                   onClick={handleCancelTransaction}
                   className="flex-1 h-auto py-3.5 text-label-m text-fg-static-white"
                 >
@@ -1497,7 +1502,7 @@ function TerminalPageInner() {
 
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
-              <span className="text-display-xl font-mono text-fg-primary break-all">
+              <span data-testid="completed-amount" className="text-display-xl font-mono text-fg-primary break-all">
                 {finalAmount}
               </span>
               <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
@@ -1716,7 +1721,7 @@ function TerminalPageInner() {
               /* The generated receipt SVG is the printed document: it paints
                  its own paper (a white rect) and ink, so it needs no surface
                  from the theme — only rounded corners to clip to. */
-              <div className="rounded-nested overflow-hidden">
+              <div data-testid="receipt-svg" className="rounded-nested overflow-hidden">
                 <div dangerouslySetInnerHTML={{ __html: svgReceipt }} />
               </div>
             ) : (

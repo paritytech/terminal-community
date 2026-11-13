@@ -138,7 +138,7 @@ export default function BackupRestorePage() {
             </div>
           )}
           {error && (
-            <div className="bg-red-900/30 border border-red-800 rounded-lg p-3 text-red-400 text-sm">
+            <div data-testid="restore-error" className="bg-red-900/30 border border-red-800 rounded-lg p-3 text-red-400 text-sm">
               {error}
             </div>
           )}
