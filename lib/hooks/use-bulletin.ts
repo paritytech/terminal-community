@@ -7,7 +7,7 @@ import {
   gatewayUrlForCid,
 } from "@/lib/bulletin/client";
 import { isSymmetricEncryptedReport, decryptReportSymmetric } from "@/lib/crypto/symmetric-report";
-import { loadManualKey } from "@/lib/crypto/manual-key";
+import { loadManualKey, manualKeyFingerprint } from "@/lib/crypto/manual-key";
 import { journeyTracker, captureError, isExpectedError, withSpan } from "@/lib/telemetry";
 
 export interface DailyReportItem {
@@ -154,11 +154,31 @@ export function useBulletin(): UseBulletinReturn {
               "This report is encrypted. Set your decryption key in Settings → Report Encryption.",
             );
           }
-          const reportJson = withSpan(
-            "bulletin.decrypt-report",
-            () => decryptReportSymmetric(data, key),
-          );
-          key.fill(0);
+          // The envelope names the key it was sealed with; a different key
+          // here would only fail the AEAD with a bare "invalid tag".
+          const sealedWith = data.meta?.keyFingerprint?.toUpperCase();
+          const current = manualKeyFingerprint();
+          const wrongKey = (fingerprint?: string) =>
+            new Error(
+              `This report was encrypted with a different key${fingerprint ? ` (${fingerprint})` : ""}. ` +
+                "Set that key in Settings → Report Encryption to open it.",
+            );
+          if (sealedWith && current && sealedWith !== current) {
+            key.fill(0);
+            throw wrongKey(sealedWith);
+          }
+          let reportJson: string;
+          try {
+            reportJson = withSpan(
+              "bulletin.decrypt-report",
+              () => decryptReportSymmetric(data, key),
+            );
+          } catch (decryptError) {
+            console.warn("[Bulletin] Decryption failed:", decryptError);
+            throw wrongKey(sealedWith);
+          } finally {
+            key.fill(0);
+          }
           const report = JSON.parse(reportJson) as DailyReport;
           journeyTracker.milestone("report-decrypt", "decrypted");
           journeyTracker.complete("report-decrypt");
