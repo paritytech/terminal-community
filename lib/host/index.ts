@@ -11,11 +11,8 @@ export {
 } from "./connection-status"
 export { connectToHost } from "./connection"
 export {
-  getPaseoIndividualityClient,
-  getPaseoIndividualityClientAsync,
   getPaseoAssetHubClient,
   resetClients,
-  PASEO_INDIVIDUALITY_GENESIS,
   PASEO_ASSET_HUB_GENESIS,
 } from "./provider"
 export { getHostAccounts, subscribeHostAccounts, type HostAccount } from "./accounts"

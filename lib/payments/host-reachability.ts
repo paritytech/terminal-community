@@ -1,13 +1,13 @@
 /**
- * "Can the host settle a coins sale right now?" — the pre-flight for the
- * coins payment method.
+ * "Can the host settle a coins sale right now?" — the pre-flight before the
+ * terminal hands out a payment QR.
  *
  * Coins never touch the chain from the product: the host claims the
  * customer's cheque (`paymentTopUp`) and reports progress
  * (`subscribeTopUpStatus`). So the right liveness signal is the host's
  * payments bridge, not a chain read — a host that does not serve the Paseo
- * People chain to products (`chainSupported` → false) leaves
- * `isChainReachable()` "offline" while payments work fine.
+ * People chain to products (`chainSupported` → false) would look "offline"
+ * to a chain probe while payments work fine.
  *
  * The probe opens `paymentBalanceSubscribe` and resolves true on the first
  * balance update (hosts push the current balance on subscribe), false on an

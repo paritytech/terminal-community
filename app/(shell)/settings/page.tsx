@@ -6,7 +6,6 @@ import {
   Briefcase,
   Bug,
   ChevronRight,
-  Coins,
   Info,
   Palette,
   ReceiptText,
@@ -37,7 +36,7 @@ interface SettingsRow {
 /**
  * Rows per the Settings design. Legacy pages that lost their entry here
  * (encryption, on-chain indexing, wallet, export) are still routable by URL —
- * only the menu changed. Payment Method is kept alongside the designed rows.
+ * only the menu changed.
  */
 // Everything here is configured manually and reads from the merchant profile
 // — the old back-office/admin-QR binding flow is retired (its page stays
@@ -49,7 +48,6 @@ interface SettingsRow {
 // editable without the parked Become a Merchant onboarding.
 const BASE_ROWS: SettingsRow[] = [
   { href: "/settings/receipt", icon: ReceiptText, title: "Receipt" },
-  { href: "/settings/payment-method", icon: Coins, title: "Payment Method" },
   { href: "/settings/details", icon: Info, title: "Details" },
   { href: "/settings/report-issue", icon: Bug, title: "Help us fix an issue" },
 ];
@@ -60,7 +58,6 @@ const MERCHANT_ROWS: SettingsRow[] = [
   { href: "/settings/merchant-profile", icon: UserRound, title: "Merchant Profile" },
   { href: "/settings/receipt", icon: ReceiptText, title: "Receipt" },
   { href: "/settings/items", icon: Shapes, title: "Show Items in Checkout" },
-  { href: "/settings/payment-method", icon: Coins, title: "Payment Method" },
   { href: "/settings/details", icon: Info, title: "Details" },
   { href: "/settings/report-issue", icon: Bug, title: "Help us fix an issue" },
 ];

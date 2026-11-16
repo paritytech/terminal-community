@@ -74,7 +74,7 @@ export async function bootItemsCheckout(host: T3Host, timeout = 90_000): Promise
   const frame = host.productFrame();
   await expect(frame.getByTestId("items-charge")).toBeVisible({ timeout });
   await host.settle();
-  // The coins pre-flight is armed once the payment method has loaded.
+  // The host payments pre-flight is armed on the checkout screen.
   await host.next("balanceSubscribe", undefined, { timeout });
   return frame;
 }

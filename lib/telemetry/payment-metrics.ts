@@ -5,15 +5,13 @@
  *     method, source and the failure reason.
  *   - `recordCoinagePaymentPhase` — how long each W3S Coinage phase took:
  *     QR setup, statement delivery, decrypt/match, the host top-up.
- *   - `recordFinalizationLatency` — time from best-block detection to GRANDPA
- *     finality, or that the watch expired first.
  *
  * Fire-and-forget: recording never throws into the caller's flow.
  */
 
 "use client";
 
-export type PaymentMethodKind = "voucher" | "coins";
+export type PaymentMethodKind = "coins";
 
 export type CoinagePaymentPhase =
   | "prepare"
@@ -38,7 +36,7 @@ export interface CoinagePaymentPhaseParams {
 
 export interface PaymentOutcomeParams {
   outcome: "success" | "failure";
-  /** Settings → Payment Method: standard pUSD voucher vs. W3S Coinage. */
+  /** How the sale settled — W3S Coinage through the host. */
   method: PaymentMethodKind;
   /** Decimal amount string for context. */
   amount?: string;
@@ -89,25 +87,5 @@ export function recordCoinagePaymentPhase(params: CoinagePaymentPhaseParams): vo
       isComplete: params.isComplete,
       reason: params.reason,
     }),
-  );
-}
-
-export interface FinalizationLatencyParams {
-  saleId: string;
-  /** ms between best-block detection (watch registration) and the outcome. */
-  latencyMs: number;
-  /** true = GRANDPA finality landed; false = the watch fuse expired first. */
-  finalized: boolean;
-  /** `performance.now()`-relative timestamp when the watch was registered. */
-  startedAt?: number;
-}
-
-/** Record the time a sale took to cross GRANDPA finality, or that it never did. */
-export function recordFinalizationLatency(params: FinalizationLatencyParams): void {
-  const latencyMs = Math.round(params.latencyMs);
-  const log = params.finalized ? console.info : console.warn;
-  log(
-    `[payment.finalization] ${params.finalized ? "finalized" : "timed out"} after ${latencyMs}ms`,
-    { saleId: params.saleId },
   );
 }

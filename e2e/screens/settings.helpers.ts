@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// Helpers for the settings group (merchant-and-settings, reports, voucher):
+// Helpers for the settings group (merchant-and-settings, reports):
 // URL-only routes, host-storage settings rows, seeded sales, the bytes the
 // host received as preimages and a scan of all host storage.
 import { expect, type FrameLocator } from "@playwright/test";

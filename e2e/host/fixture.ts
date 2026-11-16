@@ -127,11 +127,7 @@ export class T3Host {
     const h = (b: Uint8Array) => ("0x" + Buffer.from(b).toString("hex")) as Hex;
     return this.call("injectStatement", [h(topic)], h(data));
   }
-  /**
-   * The cheque request the terminal is showing. Waits for the QR to carry a
-   * cheque deeplink — until the payment-method setting loads it can briefly
-   * be the voucher QR.
-   */
+  /** The cheque request the terminal is showing. Waits for the QR to carry a cheque deeplink. */
   async readChequeRequest(timeout = 30_000): Promise<ChequeRequest> {
     const qr = this.productFrame().locator('[data-testid="qr-code"][data-qr-value^="polkadotapp://pay/cheque"]');
     await qr.waitFor({ state: "attached", timeout });
