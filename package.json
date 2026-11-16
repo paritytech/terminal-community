@@ -83,13 +83,6 @@
     "typescript": "^5",
     "vitest": "^4.1.8"
   },
-  "allowScripts": {
-    "esbuild": true,
-    "fsevents": true,
-    "unrs-resolver": true,
-    "core-js": false,
-    "sharp": false
-  },
   "overrides": {
     "deepmerge-ts": "^8.0.2"
   }

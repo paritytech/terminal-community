@@ -19,28 +19,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install system dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y -qq git curl
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
       - name: Install dependencies
-        # Same recipe as deploy-frontend.yml: drop the macOS-generated lockfile
-        # so Linux-only optional native modules resolve (npm bug #4828), and
-        # upgrade to npm 11 first — the npm 10.9.x bundled with Node 22 hits
-        # an arborist bug ("Cannot read properties of null (reading
-        # 'edgesOut')") on today's fresh resolution of this tree.
+        # Same recipe as deploy-frontend.yml: the committed lockfile, no
+        # dependency install scripts, npm pinned to the lockfile's version.
         run: |
-          npm install -g npm@11
+          npm install -g npm@11.20.0
           npm --version
-          rm -f package-lock.json
-          npm install --no-audit --no-fund
+          npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Generate PAPI descriptors
         run: npm run papi:generate
@@ -55,7 +51,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: playwright-report/
@@ -63,7 +59,7 @@ jobs:
 
       - name: Upload test traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-results
           path: test-results/

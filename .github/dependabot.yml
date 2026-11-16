@@ -1,0 +1,8 @@
+# Keeps the commit-SHA pins in .github/workflows current: each update is a
+# reviewed PR that moves a pin to a released version's commit.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
