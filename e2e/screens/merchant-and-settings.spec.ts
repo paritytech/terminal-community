@@ -240,10 +240,15 @@ test.describe("settings", () => {
   test("Report Encryption (URL-only): Save shows the key's fingerprint, kept on this device", async ({ host }) => {
     await bootTerminal(host);
     let frame = await restartOn(host, "/settings/encryption");
-    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible();
+    await expect(frame.getByText("No key set — reports can't be saved until you set one")).toBeVisible();
     const input = frame.getByPlaceholder("Enter a secret phrase");
     const save = frame.getByRole("button", { name: "Save" });
     await expect(save).toBeDisabled();
+    // Reports are public ciphertext: a short phrase is refused.
+    await input.fill("short key");
+    await save.click();
+    await expect(frame.getByText("Use at least 12 characters — a few words work well.")).toBeVisible();
+    await expect(frame.getByText("No key set — reports can't be saved until you set one")).toBeVisible();
     await input.fill("  correct horse battery  ");
     await save.click();
 
@@ -271,7 +276,7 @@ test.describe("settings", () => {
     await expect(frame.getByText(keyFingerprint("lunch shift key"), { exact: true })).toBeVisible();
 
     await frame.getByRole("button", { name: "Clear" }).click();
-    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible({ timeout: 5_000 });
+    await expect(frame.getByText("No key set — reports can't be saved until you set one")).toBeVisible({ timeout: 5_000 });
     await expect(frame.getByTestId("encryption-key-cleared")).toContainText("can't be opened");
 
     await frame.getByRole("button", { name: "Undo" }).click();
@@ -288,6 +293,6 @@ test.describe("settings", () => {
     // Clearing for good survives a restart.
     await frame.getByRole("button", { name: "Clear" }).click();
     const after = await restartOn(host, "/settings/encryption");
-    await expect(after.getByText("No key set — reports will upload as plaintext")).toBeVisible();
+    await expect(after.getByText("No key set — reports can't be saved until you set one")).toBeVisible();
   });
 });

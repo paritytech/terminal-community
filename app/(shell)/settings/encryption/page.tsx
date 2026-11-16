@@ -17,6 +17,8 @@ import {
   getManualPassphrase,
   clearManualPassphrase,
   manualKeyFingerprint,
+  restoreManualPassphrase,
+  MIN_PASSPHRASE_LENGTH,
 } from "@/lib/crypto/manual-key";
 import { journeyTracker, breadcrumb } from "@/lib/telemetry";
 
@@ -81,7 +83,7 @@ export default function EncryptionSettingsPage() {
     // Never overwrite a key set since the Clear.
     if (!cleared || getManualPassphrase()) return;
     if (undoTimer.current) clearTimeout(undoTimer.current);
-    setManualPassphrase(cleared);
+    restoreManualPassphrase(cleared);
     setCleared(null);
     refresh();
   };
@@ -111,6 +113,9 @@ export default function EncryptionSettingsPage() {
             <p>
               Use the <span className="text-white">same phrase</span> on every device that needs to read the reports. If you change or lose it, older reports can no longer be opened.
             </p>
+            <p>
+              Reports are stored publicly, so they are never saved without a key. A phrase of a few words ({MIN_PASSPHRASE_LENGTH} characters or more) is hard to guess.
+            </p>
           </section>
 
           {/* Current key fingerprint */}
@@ -125,7 +130,7 @@ export default function EncryptionSettingsPage() {
                 <span className="text-xs text-green-400">Set</span>
               </div>
             ) : (
-              <span className="text-neutral-500 text-sm">No key set — reports will upload as plaintext</span>
+              <span className="text-neutral-500 text-sm">No key set — reports can&apos;t be saved until you set one</span>
             )}
             {cleared && (
               <div

@@ -8,6 +8,7 @@ import {
   getManualPassphrase,
   manualKeyFingerprint,
   setManualPassphrase,
+  MIN_PASSPHRASE_LENGTH,
 } from "@/lib/crypto/manual-key";
 
 /**
@@ -81,10 +82,10 @@ export default function MerchantProfilePage() {
 }
 
 /**
- * Report-encryption password. The 32-byte encryption key is derived from it
- * (SHA-256, see lib/crypto/manual-key.ts) — the fingerprint shown after
- * saving lets two terminals verify they share the same key without revealing
- * the password. The secret lives in the manual-key store, never inside the
+ * Report-encryption password. Each report's key is derived from it with
+ * scrypt and a fresh salt (see lib/crypto/symmetric-report.ts) — the
+ * fingerprint shown after saving lets two terminals verify they share the
+ * same password without revealing it. The secret lives in the manual-key store, never inside the
  * merchant profile JSON.
  */
 function EncryptionPasswordSection() {
@@ -133,7 +134,8 @@ function EncryptionPasswordSection() {
       </div>
 
       <p className="text-neutral-500 text-xs mt-2">
-        Your reports are encrypted with a key derived from this password.
+        Your reports are encrypted with a key derived from this password. Use at
+        least {MIN_PASSPHRASE_LENGTH} characters.
         {fingerprint && (
           <>
             {" "}

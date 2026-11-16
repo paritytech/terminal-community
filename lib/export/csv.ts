@@ -177,13 +177,31 @@ const CSV_HEADERS = [
   "Block Number",
 ];
 
-function escCsv(val: string | null | undefined): string {
+// A cell a spreadsheet would read as a formula: =, +, -, @, or a leading tab
+// or carriage return (which some apps strip before parsing the rest).
+const FORMULA_START = /^[=+\-@\t\r]/;
+// Plain numbers ("-5.00", "+1") start with - or + but are data, not formulas.
+const PLAIN_NUMBER = /^[+-]?\d+(\.\d+)?$/;
+
+/**
+ * One CSV cell. Quotes per RFC 4180 and neutralises formula injection
+ * (CWE-1236): a text cell that a spreadsheet would evaluate gets a leading
+ * apostrophe, so `=HYPERLINK(...)` in an item name shows as text in Excel,
+ * LibreOffice or Google Sheets instead of running.
+ */
+export function csvCell(val: string | number | null | undefined): string {
   if (val === null || val === undefined) return "";
-  const s = String(val);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+  let s = String(val);
+  if (FORMULA_START.test(s) && !PLAIN_NUMBER.test(s)) s = `'${s}`;
+  if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
+}
+
+/** One CSV line from its cells. */
+export function csvLine(values: ReadonlyArray<string | number | null | undefined>): string {
+  return values.map(csvCell).join(",");
 }
 
 export function buildCsv(rows: ExportRow[]): string {
@@ -202,7 +220,7 @@ export function buildCsv(rows: ExportRow[]): string {
       r.customer,
       r.txHash,
       r.blockNumber,
-    ].map(escCsv).join(","),
+    ].map(csvCell).join(","),
   );
   return [CSV_HEADERS.join(","), ...csvRows].join("\n");
 }

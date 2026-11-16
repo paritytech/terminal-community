@@ -132,9 +132,24 @@ body {
 .success-badge {
   animation: success-badge-invert 0.30s ease-out 0.40s forwards;
 }
+/* The partial-payment twin: same timing, warning fill. */
+@keyframes warning-badge-invert {
+  from {
+    background-color: var(--bg-status-warning);
+    color: var(--fg-static-white);
+  }
+  to {
+    background-color: var(--fg-static-white);
+    color: var(--bg-status-warning);
+  }
+}
+.warning-badge {
+  animation: warning-badge-invert 0.30s ease-out 0.40s forwards;
+}
 @media (prefers-reduced-motion: reduce) {
   .success-burst,
-  .success-badge {
+  .success-badge,
+  .warning-badge {
     animation-duration: 0.01ms;
     animation-delay: 0s;
   }

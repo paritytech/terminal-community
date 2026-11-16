@@ -7,8 +7,10 @@ import {
   keyFingerprint,
   merchantAddress,
   onboardedMerchantStorage,
+  openReport,
   preimageText,
   restartOn,
+  setReportKey,
   seedSales,
   seedTodaysSales,
   todayKey,
@@ -16,10 +18,12 @@ import {
 } from "./settings.helpers";
 
 /**
- * Reports (Home → Reports, merchant-only). A report is JSON uploaded through
- * the host's preimage store (Bulletin): the app claims its allowances, asks
- * for the PreimageSubmit permission, submits the bytes and keeps the CID in
- * the `dailyReports` table. Opening a report looks the bytes up again by the
+ * Reports (Home → Reports, merchant-only). A report is JSON sealed under the
+ * merchant's report key (v3 envelope: scrypt + XChaCha20-Poly1305) and
+ * uploaded through the host's preimage store (Bulletin): the app claims its
+ * allowances, asks for the PreimageSubmit permission, submits the bytes and
+ * keeps the CID in the `dailyReports` table. Without a key nothing is
+ * uploaded. Opening a report looks the bytes up again by the
  * CID's digest. No chain is served, so the on-chain mirror always skips.
  *
  * Every test boots as an onboarded merchant (seeded before the product
@@ -60,9 +64,14 @@ async function waitForReports(host: T3Host, expected: unknown): Promise<StoredRe
 /** blake2b-256 of the bytes — the host's preimage key. */
 const keyOf = (text: string) => "0x" + Buffer.from(blake2b(Buffer.from(text, "utf8"), { dkLen: 32 })).toString("hex");
 
-/** Boot, seed today's sales and open Home → Reports in-app. */
-async function openReports(host: T3Host, amounts: string[]): Promise<{ frame: FrameLocator; sales: SeededSale[] }> {
+/** Boot, set the report key (unless `withKey` is false), seed today's sales and open Home → Reports in-app. */
+async function openReports(
+  host: T3Host,
+  amounts: string[],
+  { withKey = true }: { withKey?: boolean } = {},
+): Promise<{ frame: FrameLocator; sales: SeededSale[] }> {
   const frame = await bootTerminal(host);
+  if (withKey) await setReportKey(host);
   const sales = amounts.length ? await seedTodaysSales(host, amounts) : [];
   await gotoReportsFromHome(frame, () => frame.getByRole("link", { name: "Home", exact: true }).click());
   return { frame, sales };
@@ -105,10 +114,11 @@ test.describe("reports", () => {
     expect(host.events.indexOf(alloc)).toBeLessThan(host.events.indexOf(submit));
     expect(host.events.indexOf(perm)).toBeLessThan(host.events.indexOf(submit));
 
-    // The bytes are the plain JSON report for today's two sales.
+    // The bytes are the sealed report; opened with the key, it is today's two sales.
     const text = await preimageText(host, submit.key);
     expect(keyOf(text)).toBe(submit.key);
-    const report = JSON.parse(text) as ReportJson;
+    for (const s of sales) expect(text).not.toContain(s.saleId);
+    const report = openReport<ReportJson>(text);
     expect(report).toMatchObject({
       selectedDate: todayKey(),
       periodKey: todayKey(),
@@ -149,7 +159,7 @@ test.describe("reports", () => {
     await expect(toast(frame)).toHaveText("Closed Period 1", { timeout: 60_000 });
 
     const z = await host.next("preimageSubmit", undefined, { since });
-    const zReport = JSON.parse(await preimageText(host, z.key)) as ReportJson;
+    const zReport = openReport<ReportJson>(await preimageText(host, z.key));
     expect(zReport).toMatchObject({ periodKey: todayKey(), dayFinalized: true, totalTransactions: 3 });
     const [closed] = await waitForReports(host, [
       expect.objectContaining({ date: todayKey(), finalized: true, entryCount: 3 }),
@@ -171,7 +181,7 @@ test.describe("reports", () => {
     await frame.getByRole("button", { name: "Save Current Report" }).click();
     await expect(toast(frame)).toHaveText("Saved Period 2", { timeout: 60_000 });
     const x = await host.next("preimageSubmit", undefined, { since: since2 });
-    const xReport = JSON.parse(await preimageText(host, x.key)) as ReportJson;
+    const xReport = openReport<ReportJson>(await preimageText(host, x.key));
     expect(xReport).toMatchObject({ periodKey: `${todayKey()}#02`, periodLabel: "Period 2", totalTransactions: 1 });
     expect(xReport.transactions.map((t) => t.saleId)).toEqual([late.saleId]);
     await expect
@@ -221,12 +231,17 @@ test.describe("reports", () => {
     await expect(toast(frame)).toHaveText("Saved Period 1", { timeout: 60_000 });
     const { key } = await host.next("preimageSubmit", undefined, { since });
 
-    // What left the device is the v2 envelope, not the report.
+    // What left the device is the v3 envelope, not the report: a salted
+    // scrypt key, and no fingerprint of it to test guesses against.
     const text = await preimageText(host, key);
-    const envelope = JSON.parse(text) as { v: number; encrypted: string; meta: Record<string, unknown> };
-    expect(envelope.v).toBe(2);
+    const envelope = JSON.parse(text) as { v: number; kdf: Record<string, unknown>; encrypted: string; meta: Record<string, unknown> };
+    expect(envelope.v).toBe(3);
+    expect(envelope.kdf).toMatchObject({ name: "scrypt", N: 2 ** 15, r: 8, p: 1, salt: expect.stringMatching(/^[0-9a-f]{32}$/) });
     expect(envelope.encrypted).toMatch(/^[0-9a-f]+$/);
-    expect(envelope.meta).toMatchObject({ date: todayKey(), txCount: 2, keyFingerprint: keyFingerprint(passphrase) });
+    expect(envelope.meta).toMatchObject({ date: todayKey(), txCount: 2, keyCheck: expect.stringMatching(/^[0-9a-f]{8}$/) });
+    expect(envelope.meta).not.toHaveProperty("keyFingerprint");
+    expect(text).not.toContain(keyFingerprint(passphrase));
+    expect(openReport<ReportJson>(text, passphrase).totalTransactions).toBe(2);
     for (const s of sales) expect(text).not.toContain(s.saleId);
     expect(text).not.toContain("transactions");
     expect(text).not.toContain(passphrase);
@@ -255,7 +270,7 @@ test.describe("reports", () => {
     // merchant would, in Settings → Report Encryption.
     frame = await restartOn(host, "/settings/encryption");
     await frame.getByRole("button", { name: "Clear" }).click();
-    await expect(frame.getByText("No key set — reports will upload as plaintext")).toBeVisible();
+    await expect(frame.getByText("No key set — reports can't be saved until you set one")).toBeVisible();
     frame = await restartOn(host, "/daily-reports");
     await frame.locator('[data-testid="report-view-0"]').click();
     await expect(
@@ -265,29 +280,49 @@ test.describe("reports", () => {
   });
 
   test("a report encrypted under another key says the key is wrong", async ({ host }) => {
-    // The envelope carries the key's fingerprint (meta.keyFingerprint), so
-    // the merchant is told the key does not match, not shown a crypto error.
+    // The envelope carries a salted key check (meta.keyCheck), so the
+    // merchant is told the key does not match, not shown a crypto error.
     await bootTerminal(host);
     await seedTodaysSales(host, ["5.55"]);
     let frame = await restartOn(host, "/settings/encryption");
-    await frame.getByPlaceholder("Enter a secret phrase").fill("key one");
+    await frame.getByPlaceholder("Enter a secret phrase").fill("first report key");
     await frame.getByRole("button", { name: "Save" }).click();
-    await expect(frame.getByText(keyFingerprint("key one"), { exact: true })).toBeVisible();
+    await expect(frame.getByText(keyFingerprint("first report key"), { exact: true })).toBeVisible();
     frame = await restartOn(host, "/home/reports");
     await frame.getByRole("button", { name: "Save Current Report" }).click();
     await expect(toast(frame)).toHaveText("Saved Period 1", { timeout: 60_000 });
 
     frame = await restartOn(host, "/settings/encryption");
-    await frame.getByPlaceholder("Enter a secret phrase").fill("key two");
+    await frame.getByPlaceholder("Enter a secret phrase").fill("second report key");
     await frame.getByRole("button", { name: "Save" }).click();
-    await expect(frame.getByText(keyFingerprint("key two"), { exact: true })).toBeVisible();
+    await expect(frame.getByText(keyFingerprint("second report key"), { exact: true })).toBeVisible();
     frame = await restartOn(host, "/daily-reports");
     await frame.locator('[data-testid="report-view-0"]').click();
     await expect(frame.getByText("Loading report from IPFS...")).toHaveCount(0, { timeout: 30_000 });
     await expect(frame.getByText("Report Summary")).toHaveCount(0);
-    await expect(frame.getByText(/encrypted with a different key/i)).toBeVisible({ timeout: 5_000 });
-    await expect(frame.getByText(keyFingerprint("key one"))).toBeVisible();
+    await expect(
+      frame.getByText(
+        "This report was encrypted with a different key. Set that key in Settings → Report Encryption to open it.",
+      ),
+    ).toBeVisible({ timeout: 5_000 });
+    // A v3 envelope does not publish which key it needs.
+    await expect(frame.getByText(keyFingerprint("first report key"))).toHaveCount(0);
     await expect(frame.getByText(/invalid tag/i)).toHaveCount(0);
+  });
+
+  test("without a report key the save is refused and nothing leaves the device", async ({ host }) => {
+    const { frame } = await openReports(host, ["6.00"], { withKey: false });
+
+    const since = host.mark();
+    await frame.getByRole("button", { name: "Save Current Report" }).click();
+    const reason = "Set a report encryption key in Settings → Report Encryption first.";
+    await expect(toast(frame)).toContainText(reason, { timeout: 60_000 });
+    await expect(frame.locator('[data-testid="report-error"]')).toContainText(reason);
+
+    expect(host.events.slice(since).filter((e) => e.type === "preimageSubmit")).toHaveLength(0);
+    expect(await host.getPreimages()).toEqual([]);
+    expect(await storedReports(host)).toEqual([]);
+    await expect(frame.getByRole("button", { name: "Save Current Report" })).toBeEnabled();
   });
 
   test("a denied PreimageSubmit permission fails the save with the host's reason", async ({ host }) => {
@@ -360,6 +395,7 @@ test.describe("reports", () => {
 test.describe("legacy /daily-reports Z report", () => {
   test("Run Z asks first: Cancel uploads nothing; Close period closes today's period", async ({ host }) => {
     await bootTerminal(host);
+    await setReportKey(host);
     const sales = await seedTodaysSales(host, ["2.40", "1.60"]);
     const frame = await restartOn(host, "/daily-reports");
     const runZ = frame.getByRole("button", { name: "Run Z", exact: true });
@@ -381,7 +417,7 @@ test.describe("legacy /daily-reports Z report", () => {
     await expect(toast(frame)).toHaveText("Closed Period 1", { timeout: 60_000 });
 
     const z = await host.next("preimageSubmit", undefined, { since });
-    const report = JSON.parse(await preimageText(host, z.key)) as ReportJson;
+    const report = openReport<ReportJson>(await preimageText(host, z.key));
     expect(report).toMatchObject({ periodKey: todayKey(), dayFinalized: true, totalTransactions: 2 });
     expect(report.transactions.map((t) => t.saleId)).toEqual(sales.map((s) => s.saleId));
     await waitForReports(host, [expect.objectContaining({ date: todayKey(), finalized: true, entryCount: 2 })]);
@@ -396,6 +432,7 @@ test.describe("legacy /daily-reports Z report", () => {
 
   test("an X report left open on a past day is closed from its history row, with that day's sales only", async ({ host }) => {
     await bootTerminal(host);
+    await setReportKey(host);
     const noonYesterday = new Date();
     noonYesterday.setDate(noonYesterday.getDate() - 1);
     noonYesterday.setHours(12, 0, 0, 0);
@@ -427,7 +464,7 @@ test.describe("legacy /daily-reports Z report", () => {
     await expect(toast(frame)).toHaveText("Closed Period 1", { timeout: 60_000 });
 
     const z = await host.next("preimageSubmit", undefined, { since });
-    const report = JSON.parse(await preimageText(host, z.key)) as ReportJson;
+    const report = openReport<ReportJson>(await preimageText(host, z.key));
     expect(report).toMatchObject({ selectedDate: yesterday, periodKey: yesterday, dayFinalized: true, totalTransactions: 2 });
     expect(report.transactions.map((t) => t.saleId)).toEqual(past.map((s) => s.saleId));
     // The open record is locked in place (same row, new CID).

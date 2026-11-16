@@ -1,13 +1,14 @@
 /**
- * Manual symmetric key for daily-report encryption.
+ * The merchant's report-encryption passphrase.
  *
- * Merchant types a passphrase on the encryption settings page; we derive a
- * 32-byte key from it via SHA-256 and persist BOTH the passphrase and a
- * fingerprint in localStorage. The same key is used to encrypt new daily
- * reports and to decrypt reports read back from Bulletin.
+ * The merchant types it on Settings → Report Encryption (or Merchant
+ * Profile); it is kept in this device's localStorage and never leaves it.
+ * Reports are sealed under a key derived from it per report with scrypt and a
+ * random salt (see lib/crypto/symmetric-report.ts).
  *
- * This is intentionally simple — symmetric, single secret, no recipient list,
- * no key exchange. It replaces the per-device public-key flow for now.
+ * The fingerprint shown in Settings lets the merchant check that two
+ * terminals hold the same phrase. It is computed on the device only and is no
+ * longer written into new reports.
  */
 
 "use client"
@@ -15,6 +16,9 @@
 import { sha256 } from "@noble/hashes/sha2.js"
 
 const PASSPHRASE_KEY = "t3rminal:manual-encryption-passphrase"
+
+/** Reports are public ciphertext, so the phrase has to be long enough to resist guessing. */
+export const MIN_PASSPHRASE_LENGTH = 12
 
 function utf8(s: string): Uint8Array {
   return new TextEncoder().encode(s)
@@ -24,15 +28,32 @@ function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("")
 }
 
-/** Derive the 32-byte symmetric key from a passphrase. */
-export function deriveKeyFromPassphrase(passphrase: string): Uint8Array {
-  return sha256(utf8(`t3rminal-manual-key:${passphrase.trim()}`))
+/** Why `passphrase` can't be used as the report key, or null when it can. */
+export function passphraseProblem(passphrase: string): string | null {
+  const trimmed = passphrase.trim()
+  if (!trimmed) return "Passphrase cannot be empty"
+  if ([...trimmed].length < MIN_PASSPHRASE_LENGTH) {
+    return `Use at least ${MIN_PASSPHRASE_LENGTH} characters — a few words work well.`
+  }
+  return null
 }
 
 export function setManualPassphrase(passphrase: string): void {
   if (typeof window === "undefined") return
+  const problem = passphraseProblem(passphrase)
+  if (problem) throw new Error(problem)
+  localStorage.setItem(PASSPHRASE_KEY, passphrase.trim())
+}
+
+/**
+ * Put back a phrase this device held a moment ago (Settings → Clear → Undo).
+ * Skips the length rule: a phrase set before the rule existed still has to
+ * come back, or its reports could no longer be opened.
+ */
+export function restoreManualPassphrase(passphrase: string): void {
+  if (typeof window === "undefined") return
   const trimmed = passphrase.trim()
-  if (!trimmed) throw new Error("Passphrase cannot be empty")
+  if (!trimmed) return
   localStorage.setItem(PASSPHRASE_KEY, trimmed)
 }
 
@@ -50,20 +71,31 @@ export function hasManualKey(): boolean {
   return getManualPassphrase() !== null
 }
 
-/** Returns the derived 32-byte key, or null if no passphrase set. */
-export function loadManualKey(): Uint8Array | null {
-  const p = getManualPassphrase()
-  if (!p) return null
-  return deriveKeyFromPassphrase(p)
+/**
+ * The legacy (v2) report key: one SHA-256 over a fixed prefix and the phrase.
+ * Only for opening reports sealed before v3 — never used to seal.
+ */
+export function deriveLegacyKey(passphrase: string): Uint8Array {
+  return sha256(utf8(`t3rminal-manual-key:${passphrase.trim()}`))
+}
+
+/** First 8 hex chars of SHA-256 over the legacy key — what v2 envelopes carry. */
+export function legacyKeyFingerprint(passphrase: string): string {
+  const key = deriveLegacyKey(passphrase)
+  try {
+    return bytesToHex(sha256(key)).slice(0, 8).toUpperCase()
+  } finally {
+    key.fill(0)
+  }
 }
 
 /**
- * Short, human-readable fingerprint of the current key (first 8 hex chars of
- * SHA-256 over the derived key). Lets the merchant verify "do two terminals
- * share the same key" without revealing the passphrase.
+ * Short fingerprint of this device's phrase, for comparing terminals in
+ * Settings. Same value as the legacy v2 envelopes named, so a merchant can
+ * still match an old report's key; computed locally, never published.
  */
 export function manualKeyFingerprint(): string | null {
-  const key = loadManualKey()
-  if (!key) return null
-  return bytesToHex(sha256(key)).slice(0, 8).toUpperCase()
+  const p = getManualPassphrase()
+  if (!p) return null
+  return legacyKeyFingerprint(p)
 }

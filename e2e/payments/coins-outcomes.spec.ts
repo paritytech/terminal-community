@@ -41,12 +41,12 @@ async function openHistory(frame: FrameLocator) {
 }
 
 async function finishSale(frame: FrameLocator) {
-  await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+  await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText(/^(Payment received|Partial payment)$/);
   await frame.locator('[data-testid="btn-done"]').click();
   await expect(frame.locator('[data-testid="terminal-header"]')).toBeVisible();
 }
 
-/** The big amount on the "Payment received" screen: the first bare figure in its details card. */
+/** The big amount on the completed screen: the first bare figure in its details card. */
 const completedAmount = (frame: FrameLocator) => frame.locator('[data-testid="completed-amount"]');
 
 /**
@@ -83,10 +83,11 @@ test.describe("coins claim outcomes", () => {
 
     await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: planck("5.00").toString() });
 
-    await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+    // Not a success: its own title, and the missing part named.
+    await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Partial payment");
     await expect(frame.locator('[data-testid="sale-id"]')).toHaveText(`#${req.id.slice(-4)}`);
     await expect(frame.locator('[data-testid="coins-shortfall"]')).toHaveText(
-      "Received 5.00 of 12.50 CASH. The rest didn't arrive.",
+      "Not paid in full: 7.50 CASH is missing. Only 5.00 of 12.50 CASH arrived.",
     );
 
     // Stored at the credited amount, with what was asked for, and final:
@@ -132,7 +133,7 @@ test.describe("coins claim outcomes", () => {
     const { topUp } = await chargeAndPay(host, frame, "12.50");
     await host.emitTopUpStatus(topUp.idHex, { tag: "ClaimedPartially", actualClaimed: planck("5.00").toString() });
     await expect(frame.locator('[data-testid="coins-shortfall"]')).toHaveText(
-      "Received 5.00 of 12.50 CASH. The rest didn't arrive.",
+      "Not paid in full: 7.50 CASH is missing. Only 5.00 of 12.50 CASH arrived.",
     );
     await expect(completedAmount(frame)).toHaveText("5.00", { timeout: 5_000 });
   });

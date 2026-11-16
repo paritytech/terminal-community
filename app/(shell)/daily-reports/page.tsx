@@ -33,6 +33,7 @@ import type { DailyReportRecord } from "@/lib/storage/types";
 import { isHostPrinterAvailable, printHostDocument, type PrintDocumentKind } from "@/lib/host/printing";
 import { buildReportPrintDocument } from "@/lib/receipts/thermal-print";
 import { warmUpReportPath } from "@/lib/host/warmup";
+import { csvLine } from "@/lib/export/csv";
 
 export default function DailyReportsPage() {
   const symbol = useAssetSymbol();
@@ -313,22 +314,16 @@ export default function DailyReportsPage() {
       "Timestamp", "Timestamp Formatted", "Terminal ID", "Refund Of",
     ];
 
-    const escCsv = (val: string | null) => {
-      if (val === null) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const rows = selectedReport.transactions.map(tx => [
+    // Report fields can come from a CID fetched off Bulletin, so every cell
+    // goes through the shared escaper (formula injection included).
+    const rows = selectedReport.transactions.map(tx => csvLine([
       tx.saleId, tx.status, tx.amount, tx.amountFormatted, tx.asset,
       tx.originalMerchant || tx.evmMerchant, tx.originalCustomer || tx.evmCustomer,
       tx.txHash, tx.blockNumber, tx.timestamp, tx.timestampFormatted,
       tx.terminalId, tx.refundOf ?? "",
-    ].map(escCsv).join(","));
+    ]));
 
-    const csv = [headers.join(","), ...rows].join("\n");
+    const csv = [csvLine(headers), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
