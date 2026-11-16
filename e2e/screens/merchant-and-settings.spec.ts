@@ -96,7 +96,7 @@ test.describe("merchant onboarding", () => {
     await expect(frame.getByRole("link", { name: "Sales" })).toBeVisible();
     await expect(frame.getByRole("link", { name: "Reports" })).toHaveCount(0);
     await frame.getByRole("link", { name: "Settings" }).click();
-    for (const row of ["Receipt", "Payment Method", "Details", "Help us fix an issue"]) {
+    for (const row of ["Receipt", "Details", "Help us fix an issue"]) {
       await expect(frame.getByRole("link", { name: row, exact: true })).toBeVisible();
     }
     await expect(frame.getByRole("link", { name: "Merchant Profile" })).toHaveCount(0);
@@ -130,7 +130,7 @@ test.describe("settings", () => {
     // Editing the receipt does not onboard the merchant.
     expect((await merchantProfile(host)).completedAt).toBeUndefined();
     await frame.getByRole("button", { name: "Done" }).click();
-    await expect(frame.getByRole("link", { name: "Payment Method" })).toBeVisible();
+    await expect(frame.getByRole("link", { name: "Details", exact: true })).toBeVisible();
 
     // Next sale: its receipt carries the new header.
     await frame.getByRole("link", { name: "Back to home" }).click();
@@ -145,33 +145,6 @@ test.describe("settings", () => {
     await expect(receipt).toContainText("Main St 12");
     await expect(receipt).toContainText("TAX-778");
     await expect(receipt).toContainText("6.40");
-  });
-
-  test("Payment Method: Coins by default; Voucher is stored and survives a restart", async ({ host }) => {
-    let frame = await bootTerminal(host);
-    await frame.getByRole("link", { name: "Home", exact: true }).click();
-    await frame.getByRole("link", { name: "Settings" }).click();
-    await frame.getByRole("link", { name: "Payment Method" }).click();
-
-    const voucher = frame.getByRole("switch", { name: "Voucher" });
-    const coins = frame.getByRole("switch", { name: "Coins" });
-    await expect(coins).toHaveAttribute("aria-checked", "true");
-    await expect(voucher).toHaveAttribute("aria-checked", "false");
-    expect(await setting(host, "terminal/payment-method")).toBeUndefined();
-
-    await voucher.click();
-    await expect(voucher).toHaveAttribute("aria-checked", "true");
-    await expect(coins).toHaveAttribute("aria-checked", "false");
-    await expect.poll(() => setting(host, "terminal/payment-method")).toBe("standard");
-
-    frame = await restartOn(host, "/settings/payment-method");
-    await expect(frame.getByRole("switch", { name: "Voucher" })).toHaveAttribute("aria-checked", "true");
-    await expect(frame.getByRole("switch", { name: "Coins" })).toHaveAttribute("aria-checked", "false");
-
-    await frame.getByRole("switch", { name: "Coins" }).click();
-    await expect.poll(() => setting(host, "terminal/payment-method")).toBe("coins");
-    frame = await restartOn(host, "/settings/payment-method");
-    await expect(frame.getByRole("switch", { name: "Coins" })).toHaveAttribute("aria-checked", "true");
   });
 
   test("Details: the terminal name is saved; the terminal ID is minted once and stays", async ({ host }) => {

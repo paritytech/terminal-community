@@ -21,7 +21,7 @@ the row.
 | History — `app/(shell)/history/page.tsx` (list, detail, receipt, share QR) | done |
 | Home → Sales — `app/(shell)/home/sales/page.tsx` (stat cards, chart, tabs) | done |
 | Home → Export CSV — `app/(shell)/home/export/page.tsx` (chips, calendar sheet, preview) | done |
-| Settings → Details, Payment Method, Help us fix an issue | done |
+| Settings → Details, Help us fix an issue | done |
 | Global error boundary — `app/global-error.tsx` (own `<html>`, same fonts/theme bootstrap) | done |
 | Report job toast — `lib/components/report-job-provider.tsx` | done |
 | Shared — `components/subpage-header.tsx` (back/close + title + 40px action slot, `iconButtonClass`) | done |

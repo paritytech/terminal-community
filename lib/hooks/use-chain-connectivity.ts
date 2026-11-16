@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isChainReachable } from "@/lib/payments/chain-reachability";
+import { probeHostPayments } from "@/lib/payments/host-reachability";
 
 /**
  * Why the settlement path is not usable. "unsupported" means the host answered
@@ -37,14 +37,8 @@ export interface ChainConnectivity {
 
 export interface ChainConnectivityOptions {
   intervalMs?: number;
-  /**
-   * What "reachable" means for the active payment method: a direct chain read
-   * for pUSD (`isChainReachable`, the default), the host payments bridge for
-   * coins (`isHostPaymentsReachable`). `null` = not known yet (the payment
-   * method setting is still loading) — nothing is probed and the indicator
-   * stays green rather than flashing "offline" against the wrong path.
-   */
-  probe?: (() => Promise<ProbeResult>) | null;
+  /** What "reachable" means. Defaults to the host payments bridge, which settles every sale. */
+  probe?: () => Promise<ProbeResult>;
 }
 
 /**
@@ -53,7 +47,7 @@ export interface ChainConnectivityOptions {
  * a blocking pre-flight before handing out a payment QR.
  */
 export function useChainConnectivity(options: ChainConnectivityOptions = {}): ChainConnectivity {
-  const { intervalMs = 15000, probe = isChainReachable } = options;
+  const { intervalMs = 15000, probe = probeHostPayments } = options;
   const [isOnline, setIsOnline] = useState(true);
   const [unreachableReason, setUnreachableReason] = useState<UnreachableReason | null>(null);
   const [isChecking, setIsChecking] = useState(false);
@@ -61,7 +55,6 @@ export function useChainConnectivity(options: ChainConnectivityOptions = {}): Ch
   const mounted = useRef(true);
 
   const check = useCallback(async (): Promise<UnreachableReason | null> => {
-    if (!probe) return null;
     setIsChecking(true);
     const reason = normalise(await probe());
     if (mounted.current) {
@@ -75,7 +68,6 @@ export function useChainConnectivity(options: ChainConnectivityOptions = {}): Ch
 
   useEffect(() => {
     mounted.current = true;
-    if (!probe) return;
     void check();
     const id = setInterval(() => void check(), intervalMs);
 

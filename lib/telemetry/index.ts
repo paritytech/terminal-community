@@ -10,12 +10,10 @@ export { withSpan, breadcrumb, captureError, captureWarning, isExpectedError } f
 export {
   recordCoinagePaymentPhase,
   recordPaymentOutcome,
-  recordFinalizationLatency,
 } from "./payment-metrics";
 export type {
   CoinagePaymentPhase,
   CoinagePaymentPhaseParams,
   PaymentMethodKind,
   PaymentOutcomeParams,
-  FinalizationLatencyParams,
 } from "./payment-metrics";

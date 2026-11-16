@@ -14,7 +14,6 @@ import {
   isExpectedError,
   JourneyTracker,
   recordCoinagePaymentPhase,
-  recordFinalizationLatency,
   recordPaymentOutcome,
   withSpan,
 } from "@/lib/telemetry";
@@ -107,13 +106,6 @@ describe("payment measurements", () => {
     recordCoinagePaymentPhase({ phase: "host_topup", startedAt: 5_000 - 1234.6, coinCount: 2 });
     expect(lastLine(info)).toBe("[payment.coinage] host_topup success in 1235ms");
     expect(info.mock.calls.at(-1)?.[1]).toEqual({ coinCount: 2 });
-  });
-
-  it("logs finality, or that the watch timed out", () => {
-    recordFinalizationLatency({ saleId: "s1", latencyMs: 1200.4, finalized: true });
-    expect(lastLine(info)).toBe("[payment.finalization] finalized after 1200ms");
-    recordFinalizationLatency({ saleId: "s2", latencyMs: 9000, finalized: false });
-    expect(lastLine(warn)).toBe("[payment.finalization] timed out after 9000ms");
   });
 });
 

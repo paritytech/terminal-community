@@ -122,7 +122,7 @@ export async function updateSyncStatus(saleId: string, status: SaleRecord['syncS
 
 /**
  * Stamp `finalizedAt` on the sale once its inclusion block has reached
- * GRANDPA finality. Called from lib/payments/finalization-watcher.ts.
+ * finality. Called from lib/payments/coinage/topup-watcher.ts.
  * Idempotent: no-op for unknown saleIds, won't overwrite an existing
  * timestamp.
  */

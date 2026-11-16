@@ -33,11 +33,8 @@ import { Input } from "@/components/ui/input";
 import { FEATURES } from "@/lib/config/features";
 import { useAccount } from "@/lib/web3";
 import { QRCodeSVG } from "qrcode.react";
-import { useQRGenerator } from "@/lib/hooks/use-qr-generator";
-import { usePaymentListener, type PaymentDetected, type PartialPayment } from "@/lib/hooks/use-payment-listener";
 import { useReceiptGenerator } from "@/lib/hooks/use-receipt-generator";
 import { useChainConnectivity, type UnreachableReason } from "@/lib/hooks/use-chain-connectivity";
-import { isChainReachable } from "@/lib/payments/chain-reachability";
 import { probeHostPayments } from "@/lib/payments/host-reachability";
 import { PUSD_ASSET_ID, PUSD_DECIMALS } from "@/lib/utils/asset-ids";
 import { useAssetSymbol, getAssetSymbol } from "@/lib/utils/asset-metadata";
@@ -52,8 +49,6 @@ import {
 import type { ReceiptItem } from "@/lib/receipts/receipt-generator";
 import { journeyTracker, captureError, recordPaymentOutcome } from "@/lib/telemetry";
 import { useAdminQrPayload } from "@/lib/config/admin-qr-binding";
-import { watchForFinalization } from "@/lib/payments/finalization-watcher";
-import { usePaymentMethod } from "@/lib/config/payment-method";
 import {
   MAX_AMOUNT,
   useCoinagePayment,
@@ -75,6 +70,20 @@ import { useTerminalIdentity } from "@/lib/config/terminal";
 import { useCheckoutItems, type CheckoutItem } from "@/lib/config/checkout-items";
 
 const ASSET_ID_STR = PUSD_ASSET_ID.toString();
+
+// A settled coins sale as the receipt screens read it. Coins carry no public
+// sender and no inclusion block, so `from` is "anonymous" and the payment id
+// stands in for the block hash.
+interface ReceivedPayment {
+  from: string;
+  to: string;
+  amount: string;
+  assetId: string;
+  blockHash: string;
+  blockNumber: number;
+  saleId: string;
+  chain: "paseo-individuality";
+}
 
 // Charge on the amount screen arms the QR directly — there's no review step in
 // between (the optional receipt note lives inline on the amount screen).
@@ -153,28 +162,21 @@ function TerminalPageInner() {
   const backspaceDigit = () => {
     setAmountDigits((prev) => prev.slice(0, -1));
   };
-  // Payment method (Settings → Payment Method). `coins` swaps the QR + the
-  // detection mechanism over to the W3S real-time Coinage flow.
-  const { method } = usePaymentMethod();
-  const useCoins = method === "coins";
   // A coin cheque carries at most MAX_AMOUNT; refuse a larger sale on the
   // keypad instead of letting the cheque setup fail behind the QR screen.
   const coinLimitCents = BigInt(MAX_AMOUNT) * 100n;
-  const amountOverCoinLimit = useCoins && hasAmount && BigInt(amountDigits) > coinLimitCents;
+  const amountOverCoinLimit = hasAmount && BigInt(amountDigits) > coinLimitCents;
   // Token symbol pulled from on-chain asset metadata (falls back to the
   // bundled default until the chain read resolves).
   const symbol = useAssetSymbol();
   const [terminalState, setTerminalState] = useState<TerminalState>("input");
   const [isGenerating, setIsGenerating] = useState(false);
   const [saleId, setSaleId] = useState<string | null>(null);
-  const [paymentReceived, setPaymentReceived] = useState<PaymentDetected | null>(null);
+  const [paymentReceived, setPaymentReceived] = useState<ReceivedPayment | null>(null);
   // When the payment landed: the time every receipt of this sale states (the
   // SVG, the PDF, the print and the share QR), so a coins sale, whose id holds
   // no time, does not stamp its receipt with whenever it happens to render.
   const [paymentReceivedAt, setPaymentReceivedAt] = useState<Date | null>(null);
-  // Partial credit progress for multi-group offboards: set while the running
-  // total is below the requested amount, cleared once the sale completes.
-  const [partial, setPartial] = useState<PartialPayment | null>(null);
   // Coins claim that credited less than the cheque asked for (the host will
   // claim no more) — shown on the completed screen next to the recorded amount.
   const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string } | null>(null);
@@ -186,13 +188,10 @@ function TerminalPageInner() {
   const [printMessage, setPrintMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   // Cart lines stashed by /items "Charge" — flow into the printed receipt.
   const [pendingItems, setPendingItems] = useState<StoredCartLine[]>([]);
-  // Chain reachability: periodic indicator + a pre-flight gate before issuing a QR.
-  // Coins settle through the host's payments bridge (no direct chain read),
-  // pUSD through the chain itself — probe the path that will actually be
-  // used. Until the method setting loads nothing is probed.
-  const connectivity = useChainConnectivity({
-    probe: method === undefined ? null : useCoins ? probeHostPayments : isChainReachable,
-  });
+  // Reachability of the host's payments bridge (coins settle through it, never
+  // a direct chain read): periodic indicator + a pre-flight gate before
+  // issuing a QR.
+  const connectivity = useChainConnectivity({ probe: probeHostPayments });
   const [connectivityError, setConnectivityError] = useState<string | null>(null);
   // What to tell the merchant when a sale cannot be settled. "unsupported"
   // gets its own words: the host answered, it just has no payments on this
@@ -269,15 +268,6 @@ function TerminalPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const qrData = finalAmount && receivingAddress ? {
-    recipient: receivingAddress,
-    amountPlanck: amountToPlanck(finalAmount, PUSD_DECIMALS).toString(),
-    terminalId: terminalId ?? undefined,
-
-  } : null;
-
-  const qrValue = useQRGenerator(qrData);
-
   // Decimal tip + subtotal for the receipt breakdown (only when a tip exists).
   // `finalAmount` is the grand total; subtotal = total − tip.
   const tipDecimal = tipPlanck && /^\d+$/.test(tipPlanck) && BigInt(tipPlanck) > 0n
@@ -290,151 +280,15 @@ function TerminalPageInner() {
       )
     : undefined;
 
-  // Mark QR rendered as soon as we have a value to show — useful to split
-  // "how fast did we generate the QR" from "how long did the customer take
-  // to pay" in the waterfall.
-  useEffect(() => {
-    if (qrValue) journeyTracker.milestone("terminal-payment", "qr-generated");
-  }, [qrValue]);
-
-  // Sale-in-progress: while waiting for the offboard credit to land, the
-  // listener is the only thing that can advance state. Locking out new sales
-  // (calculator + nav) is the merchant-side counterpart to the QR's
-  // lockAmount=true flag.
+  // Sale-in-progress: while waiting for the cheque to be claimed, the coins
+  // hook is the only thing that can advance state. Locking out new sales
+  // (calculator + nav) is the merchant-side counterpart to the QR's fixed
+  // amount.
   const saleInProgress = terminalState === "qr" && !paymentReceived;
   useNavLock(saleInProgress);
   // Full-screen states with no tab bar: the payment QR (every vertical pixel
   // goes to the scannable code) and the share-receipt view.
   useNavHidden(terminalState === "qr" || terminalState === "share");
-
-  // The listener only runs while the QR screen is awaiting payment. After
-  // best-block detection we hand off finalization tracking to the singleton
-  // in lib/payments/finalization-watcher.ts and tear this subscription down
-  // so the merchant can start the next sale immediately. The watcher stamps
-  // `finalizedAt` on the sale row when GRANDPA finality lands and history
-  // surfaces the indicator.
-  const listenerActive = !useCoins && !!receivingAddress && saleInProgress;
-
-  const listenerOptions = listenerActive && receivingAddress ? {
-    recipient: receivingAddress,
-    // Reconcile incoming credits against the requested total. A multi-group
-    // wallet offboard lands as several credits; the listener accumulates them
-    // and only fires success once the sum reaches this amount.
-    requestedPlanck: finalAmount
-      ? amountToPlanck(finalAmount, PUSD_DECIMALS).toString()
-      : undefined,
-    onPartialPayment: (p: PartialPayment) => {
-      console.log("[Terminal] Partial payment:", p.received, "/", p.requested);
-      setPartial(p);
-      journeyTracker.milestone("terminal-payment", "payment-partial");
-    },
-    onPaymentDetected: async (payment: PaymentDetected) => {
-      console.log("[Terminal] Payment detected!", payment);
-      setPartial(null);
-      journeyTracker.milestone("terminal-payment", "payment-detected");
-      journeyTracker.addAttributes("terminal-payment", {
-        "journey.sale_id": payment.saleId,
-        "journey.block_number": payment.blockNumber ?? 0,
-      });
-      const receivedAt = new Date();
-      setPaymentReceived(payment);
-      setPaymentReceivedAt(receivedAt);
-      setSaleId(payment.saleId);
-
-      // Persist the merchant address that actually received the payment —
-      // that's the admin-configured payout when an admin payload is bound,
-      // or the connected wallet for the standalone flow.
-      const normalizedMerchant = normalizeToAssetHubAddress(receivingAddress);
-      // Coinage offboard is privacy-preserving — the new "_and_vouchers"
-      // pallet call doesn't expose the sender, so the listener gives us
-      // the sentinel "anonymous". Skip normalization for that case.
-      const normalizedCustomer = payment.from === "anonymous"
-        ? "anonymous"
-        : normalizeToAssetHubAddress(payment.from);
-
-      // Snapshot cart lines as receipt items — these get persisted on the
-      // sale record so a re-print from history shows the same itemized
-      // breakdown, and they get included in the daily bulletin report.
-      const receiptItems: ReceiptItem[] = pendingItems.map((line) => ({
-        name: line.name,
-        quantity: line.quantity,
-        unitPrice: formatAmountFromPlanck(line.pricePlanks, PUSD_DECIMALS),
-      }));
-
-      try {
-        await addSale({
-          saleId: payment.saleId,
-          amount: formatAmountFromPlanck(payment.amount, PUSD_DECIMALS),
-          amountPlanck: payment.amount,
-          asset: getAssetSymbol(),
-          assetId: ASSET_ID_STR,
-          merchantAddress: normalizedMerchant,
-          customerAddress: normalizedCustomer,
-          merchantAddressNormalized: normalizedMerchant,
-          customerAddressNormalized: normalizedCustomer,
-          transactionHash: payment.blockHash,
-          blockNumber: payment.blockNumber,
-          blockHash: payment.blockHash,
-          timestamp: receivedAt,
-          type: 'incoming',
-          items: receiptItems.length > 0 ? receiptItems : undefined,
-          tip: tipDecimal,
-          note: note.trim() || undefined,
-        });
-        journeyTracker.milestone("terminal-payment", "sale-saved");
-        console.log("[Terminal] Sale saved to local storage");
-
-        // Hand off finalization tracking to the background watcher. The
-        // sale row already exists with `finalizedAt: undefined`; the
-        // watcher will stamp it once GRANDPA finality lands. Fire-and-
-        // forget: this terminal page can unmount immediately after.
-        watchForFinalization(payment.saleId, payment.blockHash);
-      } catch (err) {
-        console.error("[Terminal] Failed to save sale to local storage:", err);
-        captureError(err, { component: "terminal", phase: "save-sale" }, {
-          saleId: payment.saleId,
-        });
-      }
-
-      const svg = await generateSvgReceipt({
-        amount: formatAmountFromPlanck(payment.amount, PUSD_DECIMALS),
-        asset: getAssetSymbol(),
-        merchantAddress: normalizedMerchant,
-        customerAddress: normalizedCustomer,
-        transactionId: payment.blockHash,
-        blockNumber: payment.blockNumber,
-        blockHash: payment.blockHash,
-        assetId: ASSET_ID_STR,
-        saleId: payment.saleId,
-        timestamp: receivedAt,
-        items: receiptItems.length > 0 ? receiptItems : undefined,
-        subtotal: subtotalDecimal,
-        tip: tipDecimal,
-        note: note.trim() || undefined,
-      });
-
-      if (svg) {
-        setSvgReceipt(svg);
-        journeyTracker.milestone("terminal-payment", "receipt-generated");
-      }
-      // Sale is closed — drop the stashed cart so it can't leak to the next
-      // sale if the merchant returns to /items without re-picking.
-      clearPendingSale();
-      setTerminalState("completed");
-      journeyTracker.complete("terminal-payment");
-      recordPaymentOutcome({
-        outcome: "success",
-        method: "voucher",
-        amount: formatAmountFromPlanck(payment.amount, PUSD_DECIMALS),
-        source: searchParams.get("source") ?? "direct",
-        saleId: payment.saleId,
-        terminalId: terminalId ?? undefined,
-        merchantId: adminPayload?.merchantId,
-      });
-    },
-  } : null;
-
-  usePaymentListener(listenerOptions);
 
   // W3S Coinage completion: the host has moved the bearer coins into the
   // merchant coin set (paymentTopUp Coins) and the claim is in a best-chain
@@ -473,7 +327,7 @@ function TerminalPageInner() {
       ? normalizeToAssetHubAddress(receivingAddress)
       : "";
 
-    const payment: PaymentDetected = {
+    const payment: ReceivedPayment = {
       from: "anonymous",
       to: normalizedMerchant,
       amount: amountPlanck,
@@ -550,7 +404,7 @@ function TerminalPageInner() {
   };
 
   const coinage = useCoinagePayment(
-    useCoins && saleInProgress
+    saleInProgress
       ? {
           active: true,
           amount: finalAmount,
@@ -562,24 +416,22 @@ function TerminalPageInner() {
       : null,
   );
 
-  // The QR screen shows the Coinage deeplink when the coins method is active,
-  // otherwise the standard pUSD payload.
-  const displayQrValue = useCoins ? coinage.qrValue : qrValue;
+  // The QR screen shows the Coinage deeplink.
+  const displayQrValue = coinage.qrValue;
 
-  // For the coins path the deeplink QR comes from the coinage hook, not the
-  // standard qrValue — track when it's ready so the journey waterfall captures
-  // QR-armed time for both payment methods.
+  // Mark QR rendered as soon as the deeplink is ready — splits "how fast did
+  // we generate the QR" from "how long did the customer take to pay" in the
+  // journey waterfall.
   useEffect(() => {
-    if (useCoins && coinage.qrValue) journeyTracker.milestone("terminal-payment", "qr-generated");
-  }, [useCoins, coinage.qrValue]);
+    if (coinage.qrValue) journeyTracker.milestone("terminal-payment", "qr-generated");
+  }, [coinage.qrValue]);
 
   // Coins flow failure: the host's claim/top-up can error out (decrypt,
-  // codec, or chain trouble). The voucher flow has no comparable terminal
-  // failure — a missing payment is an abandon, not a failure — so this is the
-  // only place we record a payment.outcome=failure. Fires once per transition
-  // into the error state.
+  // codec, or chain trouble). A missing payment is an abandon, not a failure,
+  // so this is the only place we record a payment.outcome=failure. Fires once
+  // per transition into the error state.
   useEffect(() => {
-    if (!useCoins || coinage.status !== "error") return;
+    if (coinage.status !== "error") return;
     recordPaymentOutcome({
       outcome: "failure",
       method: "coins",
@@ -590,15 +442,13 @@ function TerminalPageInner() {
       reason: coinage.error ?? "coinage_error",
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useCoins, coinage.status]);
+  }, [coinage.status]);
 
   useEffect(() => {
     const paymentIncoming =
-      paymentReceived ||
-      partial ||
-      (useCoins && (coinage.status === "claiming" || coinage.status === "paid"));
+      paymentReceived || coinage.status === "claiming" || coinage.status === "paid";
     if (paymentIncoming) setShowCancelModal(false);
-  }, [coinage.status, partial, paymentReceived, useCoins]);
+  }, [coinage.status, paymentReceived]);
 
   // Mirror the on-screen payment QR onto the host NFC tag (HCE) when the host
   // exposes one, so a customer can tap-to-pay instead of scanning. Same deeplink
@@ -611,8 +461,8 @@ function TerminalPageInner() {
     saleInProgress &&
     !!displayQrValue &&
     !paymentReceived &&
-    !partial &&
-    !(useCoins && (coinage.status === "claiming" || coinage.status === "paid"));
+    coinage.status !== "claiming" &&
+    coinage.status !== "paid";
 
   useEffect(() => {
     if (!FEATURES.nfcTapToPay || !paymentQrLive || !displayQrValue) return;
@@ -631,7 +481,7 @@ function TerminalPageInner() {
   );
   const cartCount = cart.reduce((n, line) => n + line.quantity, 0);
   const cartTotalDecimal = formatAmountFromPlanck(cartTotalPlanks.toString(), PUSD_DECIMALS);
-  const cartOverCoinLimit = useCoins && cartTotalPlanks > BigInt(MAX_AMOUNT) * 10n ** BigInt(PUSD_DECIMALS);
+  const cartOverCoinLimit = cartTotalPlanks > BigInt(MAX_AMOUNT) * 10n ** BigInt(PUSD_DECIMALS);
 
   // Tapping a tile adds one; repeat taps merge into the same line.
   const addCatalogItem = (item: CheckoutItem) => {
@@ -713,7 +563,7 @@ function TerminalPageInner() {
   };
 
   // Basket → QR: the cart total becomes the keypad amount (cents) so the
-  // whole downstream flow (QR screen, listener reconciliation) is untouched,
+  // whole downstream flow (QR screen, cheque amount check) is untouched,
   // and the lines are stashed for the itemized receipt.
   const handleChargeCart = () => {
     if (!account || cartCount === 0 || cartOverCoinLimit) return;
@@ -746,7 +596,6 @@ function TerminalPageInner() {
     setFinalAmount("");
     setPaymentReceived(null);
     setPaymentReceivedAt(null);
-    setPartial(null);
     setCoinsShortfall(null);
     setSaleId(null);
     setSvgReceipt(null);
@@ -1268,19 +1117,17 @@ function TerminalPageInner() {
 
   // QR Code State - Waiting for payment
   if (terminalState === "qr") {
-    // Coins mode: the first sign a payment is on its way is the cheque landing
-    // on our statement-store topic (status flips to "claiming", then "paid"
-    // once the host claim goes through). Until then we just show the QR. At
-    // that moment we hide the QR and spin, so the merchant sees the payment is
-    // arriving. Standard (Voucher) mode keeps its always-on waiting animation.
-    const paymentIncoming =
-      useCoins &&
-      (coinage.status === "claiming" || coinage.status === "paid");
+    // The first sign a payment is on its way is the cheque landing on our
+    // statement-store topic (status flips to "claiming", then "paid" once the
+    // host claim goes through). Until then we just show the QR. At that
+    // moment we hide the QR and spin, so the merchant sees the payment is
+    // arriving.
+    const paymentIncoming = coinage.status === "claiming" || coinage.status === "paid";
     // The host could not finish claiming the cheque's coins (see
     // lib/payments/coinage/claim.ts). The customer has already paid, so the
     // QR must not come back; the merchant retries the claim or cancels.
-    const claimFailed = useCoins && coinage.status === "error";
-    const canCancelTransaction = !paymentIncoming && !partial && !paymentReceived;
+    const claimFailed = coinage.status === "error";
+    const canCancelTransaction = !paymentIncoming && !paymentReceived;
     // Warning fill while the QR is being armed (connectivity pre-flight or
     // deeplink still computing); the inverted container surface once it's
     // scannable. There is no informational status token — the old brand-blue
@@ -1316,11 +1163,9 @@ function TerminalPageInner() {
                   ? "Claim didn't finish"
                   : paymentIncoming
                   ? "Payment incoming…"
-                  : partial
-                    ? "Receiving payment…"
-                    : FEATURES.nfcTapToPay
-                      ? "Scan QR or tap NFC to pay"
-                      : "Scan QR to pay"}
+                  : FEATURES.nfcTapToPay
+                    ? "Scan QR or tap NFC to pay"
+                    : "Scan QR to pay"}
             </h2>
           </div>
 
@@ -1343,23 +1188,6 @@ function TerminalPageInner() {
             {/* QR sits centered in the remaining space; Cancel is pinned to
                 the bottom — matches the design's lower QR placement. */}
             <div className="flex-1 flex flex-col items-center justify-center w-full py-2">
-              {/* Multi-group offboard in progress: part of the total has landed,
-                  we're still waiting for the remaining recycler groups. A
-                  nested-surface chip with warning text and a warning dot —
-                  there is no warning tint token (reported as a gap). */}
-              {partial && (
-                <div
-                  data-testid="partial-progress"
-                  className="-mt-2 mb-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-nested"
-                >
-                  <span className="size-2 rounded-full bg-status-warning animate-pulse" />
-                  <span className="text-label-m text-fg-warning">
-                    Received {formatAmountFromPlanck(partial.received, PUSD_DECIMALS)} of{" "}
-                    {formatAmountFromPlanck(partial.requested, PUSD_DECIMALS)} {symbol} — waiting…
-                  </span>
-                </div>
-              )}
-
               {/* QR Code — a nested-surface placeholder while generating (or
                   once a payment starts arriving). The QR paints its own white
                   quiet zone (marginSize) so it scans on every theme without
@@ -1389,7 +1217,7 @@ function TerminalPageInner() {
 
               {/* Claim progress / failure — plain words; the raw host reason is
                   in the console and telemetry */}
-              {useCoins && coinage.status === "claiming" && (
+              {coinage.status === "claiming" && (
                 <p data-testid="coins-claiming" className="text-body-m text-fg-secondary mt-4 text-center max-w-xs">
                   {coinage.claimStage === "detecting"
                     ? "Waiting for the coins to reach the chain"
@@ -1521,9 +1349,9 @@ function TerminalPageInner() {
           <main className="flex-1 min-h-0 overflow-y-auto flex flex-col px-6 pb-6 pt-8 bg-surface-container rounded-t-container -mt-6 relative">
 
             {/* No finality indicator here — best-block is the merchant-side
-                terminal state. GRANDPA finalization is stamped on the sale
-                record asynchronously by lib/payments/finalization-watcher.ts
-                and surfaced as a checkmark in /history. */}
+                terminal state. The host's last word on the claim is stamped
+                on the sale record asynchronously by
+                lib/payments/coinage/topup-watcher.ts and surfaced in /history. */}
 
             {/* Amount + order line */}
             <div className="flex items-baseline justify-between gap-4 mb-2">
@@ -1638,7 +1466,7 @@ function TerminalPageInner() {
     // The shared QR carries the exact same self-contained receipt envelope
     // that's printed on the receipt — scanning it rebuilds the full receipt
     // offline (no `/receipt/<id>` round-trip). Built from the same data the
-    // listener used to render the receipt, so the two QRs are identical.
+    // completed screen used to render the receipt, so the two QRs are identical.
     const shareReceiptItems: ReceiptItem[] = pendingItems.map((line) => ({
       name: line.name,
       quantity: line.quantity,

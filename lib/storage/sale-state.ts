@@ -13,8 +13,8 @@ export type SaleClaimState = "received" | "confirming" | "partial" | "reverted";
 export function saleClaimState(sale: Pick<SaleRecord, "finalizedAt" | "revertedAt" | "requestedAmount" | "topUpId">): SaleClaimState {
   if (sale.revertedAt) return "reverted";
   if (sale.requestedAmount) return "partial";
-  // Only coins sales carry a topUpId; anything else recorded here is treated
-  // as received (the voucher flow is not in use).
+  // Coins sales carry a topUpId; an older record without one is treated as
+  // received.
   if (sale.topUpId && !sale.finalizedAt) return "confirming";
   return "received";
 }
