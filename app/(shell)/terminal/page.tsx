@@ -179,7 +179,7 @@ function TerminalPageInner() {
   const [paymentReceivedAt, setPaymentReceivedAt] = useState<Date | null>(null);
   // Coins claim that credited less than the cheque asked for (the host will
   // claim no more) — shown on the completed screen next to the recorded amount.
-  const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string } | null>(null);
+  const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string; missing: string } | null>(null);
   const [svgReceipt, setSvgReceipt] = useState<string | null>(null);
   const [finalAmount, setFinalAmount] = useState<string>("");
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -342,7 +342,16 @@ function TerminalPageInner() {
     setPaymentReceivedAt(receivedAt);
     setSaleId(result.paymentId);
     setCoinsShortfall(
-      result.partial ? { requested: result.requestedAmount, credited: result.amount } : null,
+      result.partial
+        ? {
+            requested: result.requestedAmount,
+            credited: result.amount,
+            missing: formatAmountFromPlanck(
+              amountToPlanck(result.requestedAmount, PUSD_DECIMALS) - amountToPlanck(result.amount, PUSD_DECIMALS),
+              PUSD_DECIMALS,
+            ),
+          }
+        : null,
     );
 
     const receiptItems: ReceiptItem[] = pendingItems.map((line) => ({
@@ -393,9 +402,10 @@ function TerminalPageInner() {
     setTerminalState("completed");
     journeyTracker.complete("terminal-payment");
     recordPaymentOutcome({
-      outcome: "success",
+      outcome: result.partial ? "partial" : "success",
       method: "coins",
       amount: result.amount,
+      ...(result.partial ? { reason: `credited ${result.amount} of ${result.requestedAmount}` } : {}),
       source: searchParams.get("source") ?? "direct",
       saleId: result.paymentId,
       terminalId: terminalId ?? undefined,
@@ -1314,10 +1324,15 @@ function TerminalPageInner() {
               whole zone is filled (see .success-burst in globals.css);
               overflow-hidden clips the disc to this zone, the details card
               below keeps its container surface. */}
+          {/* A partial claim is not a success: the same burst in the warning
+              fill, an alert badge and its own title, so nobody at the till
+              mistakes it for a paid sale. */}
           <div className="relative overflow-hidden basis-[40%] grow-0 shrink-0 flex flex-col">
             <div
               aria-hidden
-              className="success-burst absolute left-1/2 top-1/2 size-[1200px] rounded-full bg-status-success pointer-events-none"
+              className={`success-burst absolute left-1/2 top-1/2 size-[1200px] rounded-full pointer-events-none ${
+                coinsShortfall ? "bg-status-warning" : "bg-status-success"
+              }`}
             />
 
             <div className="relative flex-1 flex flex-col">
@@ -1333,11 +1348,17 @@ function TerminalPageInner() {
               </header>
 
               <div className="flex-1 flex flex-col items-center justify-center pb-8">
-                <div className="success-badge size-16 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-4">
-                  <Check className="size-6" strokeWidth={3} />
-                </div>
+                {coinsShortfall ? (
+                  <div className="warning-badge size-16 rounded-full bg-status-warning text-fg-static-white flex items-center justify-center mb-4">
+                    <TriangleAlert className="size-6" strokeWidth={3} />
+                  </div>
+                ) : (
+                  <div className="success-badge size-16 rounded-full bg-status-success text-fg-static-white flex items-center justify-center mb-4">
+                    <Check className="size-6" strokeWidth={3} />
+                  </div>
+                )}
                 <h2 data-testid="payment-completed" className="text-display-l text-fg-primary">
-                  Payment received
+                  {coinsShortfall ? "Partial payment" : "Payment received"}
                 </h2>
               </div>
             </div>
@@ -1371,7 +1392,8 @@ function TerminalPageInner() {
             </p>
             {coinsShortfall && (
               <p data-testid="coins-shortfall" className="text-body-m text-fg-warning -mt-4 mb-6">
-                Received {coinsShortfall.credited} of {coinsShortfall.requested} {symbol}. The rest didn&apos;t arrive.
+                Not paid in full: {coinsShortfall.missing} {symbol} is missing. Only{" "}
+                {coinsShortfall.credited} of {coinsShortfall.requested} {symbol} arrived.
               </p>
             )}
 

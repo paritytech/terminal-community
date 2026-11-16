@@ -6,8 +6,14 @@ import {
   fetchJsonFromBulletin,
   gatewayUrlForCid,
 } from "@/lib/bulletin/client";
-import { isSymmetricEncryptedReport, decryptReportSymmetric } from "@/lib/crypto/symmetric-report";
-import { loadManualKey, manualKeyFingerprint } from "@/lib/crypto/manual-key";
+import {
+  DamagedReportError,
+  WrongReportKeyError,
+  type EncryptedReport,
+  decryptReport,
+  isEncryptedReport,
+} from "@/lib/crypto/symmetric-report";
+import { getManualPassphrase } from "@/lib/crypto/manual-key";
 import { journeyTracker, captureError, isExpectedError, withSpan } from "@/lib/telemetry";
 
 export interface DailyReportItem {
@@ -61,7 +67,8 @@ export interface UseBulletinReturn {
   isUploading: boolean;
   isReading: boolean;
   error: string | null;
-  uploadDailyReport: (report: DailyReport, precomputedBytes?: Uint8Array) => Promise<{
+  /** Uploads a sealed report; a plain DailyReport is never accepted. */
+  uploadDailyReport: (report: EncryptedReport, precomputedBytes?: Uint8Array) => Promise<{
     cid: string;
     cidHash: string;
     gatewayUrl: string;
@@ -83,7 +90,7 @@ export function useBulletin(): UseBulletinReturn {
   const [error, setError] = useState<string | null>(null);
 
   const uploadDailyReport = useCallback(
-    async (report: DailyReport, precomputedBytes?: Uint8Array) => {
+    async (report: EncryptedReport, precomputedBytes?: Uint8Array) => {
       setIsUploading(true);
       setError(null);
 
@@ -94,7 +101,7 @@ export function useBulletin(): UseBulletinReturn {
         // already mirrored on-chain.
         const jsonBytes = precomputedBytes ?? new TextEncoder().encode(JSON.stringify(report, null, 2));
 
-        console.log(`[Bulletin] Uploading daily report for ${report.selectedDate}`);
+        console.log(`[Bulletin] Uploading daily report for ${report.meta.date}`);
 
         const result = await withSpan(
           "bulletin.upload-report",
@@ -145,43 +152,29 @@ export function useBulletin(): UseBulletinReturn {
         );
         journeyTracker.milestone("report-decrypt", "ipfs-fetched");
 
-        // If encrypted with manual passphrase, attempt symmetric decryption
-        if (isSymmetricEncryptedReport(data)) {
-          console.log("[Bulletin] Report is encrypted, attempting decryption...");
-          const key = loadManualKey();
-          if (!key) {
+        // Encrypted under the merchant's passphrase (v3, or a legacy v2).
+        // The envelope tells a wrong key from a damaged copy, so the merchant
+        // never sees a bare "invalid tag".
+        if (isEncryptedReport(data)) {
+          console.log(`[Bulletin] Report is encrypted (v${data.v}), attempting decryption...`);
+          const passphrase = getManualPassphrase();
+          if (!passphrase) {
             throw new Error(
               "This report is encrypted. Set your decryption key in Settings → Report Encryption.",
             );
           }
-          // The envelope names the key it was sealed with; a different key
-          // here would only fail the AEAD with a bare "invalid tag".
-          const sealedWith = data.meta?.keyFingerprint?.toUpperCase();
-          const current = manualKeyFingerprint();
-          const wrongKey = (fingerprint?: string) =>
-            new Error(
-              `This report was encrypted with a different key${fingerprint ? ` (${fingerprint})` : ""}. ` +
-                "Set that key in Settings → Report Encryption to open it.",
-            );
-          if (sealedWith && current && sealedWith !== current) {
-            key.fill(0);
-            throw wrongKey(sealedWith);
-          }
           let reportJson: string;
           try {
-            reportJson = withSpan(
+            reportJson = await withSpan(
               "bulletin.decrypt-report",
-              () => decryptReportSymmetric(data, key),
+              () => decryptReport(data, passphrase),
             );
           } catch (decryptError) {
             console.warn("[Bulletin] Decryption failed:", decryptError);
-            // The right key that still fails to open it means a damaged copy.
-            if (sealedWith && current && sealedWith === current) {
-              throw new Error("This report could not be decrypted: the stored copy looks damaged.");
+            if (decryptError instanceof WrongReportKeyError || decryptError instanceof DamagedReportError) {
+              throw decryptError;
             }
-            throw wrongKey(sealedWith);
-          } finally {
-            key.fill(0);
+            throw new WrongReportKeyError();
           }
           const report = JSON.parse(reportJson) as DailyReport;
           journeyTracker.milestone("report-decrypt", "decrypted");

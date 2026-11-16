@@ -3,7 +3,8 @@
 // URL-only routes, host-storage settings rows, seeded sales, the bytes the
 // host received as preimages and a scan of all host storage.
 import { expect, type FrameLocator } from "@playwright/test";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, scryptSync } from "node:crypto";
+import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { AccountId } from "polkadot-api";
 import type { T3Host } from "../host/fixture";
 import { planck } from "../host/flows";
@@ -148,6 +149,42 @@ export async function hostStorageHits(host: T3Host, needle: string): Promise<str
 }
 
 // ── report encryption key (lib/crypto/manual-key.ts) ──────────────────────
+
+/** A report key long enough for the 12-character rule. */
+export const REPORT_PASSPHRASE = "morning shift key";
+
+/**
+ * Give the terminal a report key the way the encryption page stores it (this
+ * device's localStorage), without the trip through Settings. Reports are
+ * never uploaded without one.
+ */
+export async function setReportKey(host: T3Host, passphrase = REPORT_PASSPHRASE): Promise<void> {
+  await host.productFrame().locator("body").evaluate(
+    (_, p) => localStorage.setItem("t3rminal:manual-encryption-passphrase", p),
+    passphrase,
+  );
+}
+
+/** A v3 report envelope as it lands on Bulletin. */
+export interface ReportEnvelope {
+  v: number;
+  kdf: { name: string; N: number; r: number; p: number; salt: string };
+  encrypted: string;
+  meta: Record<string, unknown>;
+}
+
+/** Open a v3 envelope with `passphrase` (scrypt + XChaCha20-Poly1305), as the app does. */
+export function openReport<T = unknown>(text: string, passphrase = REPORT_PASSPHRASE): T {
+  const env = JSON.parse(text) as ReportEnvelope;
+  if (env.v !== 3) throw new Error(`expected a v3 report envelope, got v${env.v}`);
+  const { N, r, p, salt } = env.kdf;
+  const key = scryptSync(Buffer.from(passphrase.trim().normalize("NFKC"), "utf8"), Buffer.from(salt, "hex"), 32, {
+    N, r, p, maxmem: 256 * N * r,
+  });
+  const packed = Buffer.from(env.encrypted, "hex");
+  const plain = xchacha20poly1305(key, packed.subarray(0, 24)).decrypt(packed.subarray(24));
+  return JSON.parse(Buffer.from(plain).toString("utf8")) as T;
+}
 
 /** The fingerprint Settings → Report Encryption shows for `passphrase`. */
 export function keyFingerprint(passphrase: string): string {

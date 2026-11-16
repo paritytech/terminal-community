@@ -93,6 +93,12 @@ describe("withSpan", () => {
 });
 
 describe("payment measurements", () => {
+  it("logs a partial claim as a warning, not a success", () => {
+    recordPaymentOutcome({ outcome: "partial", method: "coins", reason: "credited 5.00 of 12.50" });
+    expect(lastLine(warn)).toBe("[payment] partial");
+    expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({ reason: "credited 5.00 of 12.50" });
+  });
+
   it("logs a success as info and a failure as a warning with its reason", () => {
     recordPaymentOutcome({ outcome: "success", method: "coins", saleId: "s1" });
     expect(lastLine(info)).toBe("[payment] success");

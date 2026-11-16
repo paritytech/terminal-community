@@ -14,8 +14,8 @@ import {
 } from "@/lib/contracts/revive-bulletin-index";
 import { useAccount } from "@/lib/web3";
 import { calculateCID } from "@/lib/bulletin/cid";
-import { loadManualKey, manualKeyFingerprint } from "@/lib/crypto/manual-key";
-import { encryptReportSymmetric } from "@/lib/crypto/symmetric-report";
+import { getManualPassphrase } from "@/lib/crypto/manual-key";
+import { encryptReport } from "@/lib/crypto/symmetric-report";
 import { journeyTracker, captureError, isExpectedError } from "@/lib/telemetry";
 import { loadAdminQrPayload } from "@/lib/config/admin-qr-binding";
 import { isOnchainIndexingEnabled } from "@/lib/config/onchain-indexing";
@@ -45,6 +45,10 @@ function withReportTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
  *  hung ADVISORY check must not stall the pipeline (it is skipped on timeout,
  *  matching the existing skip-on-read-failure behavior). */
 const PRECHECK_TIMEOUT_MS = 8_000;
+
+/** Shown when a report is saved before the merchant has set a report key. */
+export const REPORT_KEY_REQUIRED =
+  "Set a report encryption key in Settings → Report Encryption first. Reports are stored publicly, so they are never uploaded unencrypted.";
 
 function raceTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   return Promise.race([
@@ -97,12 +101,6 @@ export interface UseDailyReportReturn {
   error: string | null;
   generateReport: (date: string, merchantAddress: string, finalize?: boolean) => Promise<DailyReport>;
   generateReportForSales: (args: PeriodReportArgs) => Promise<DailyReport>;
-  uploadReport: (report: DailyReport) => Promise<{
-    cid: string;
-    cidHash: string;
-    gatewayUrl: string;
-    blockHash: string;
-  }>;
   /**
    * Build + upload a report for `date` and mirror its CID locally and on-chain,
    * leaving the day OPEN (repeatable — overwrites the prior CID).
@@ -283,26 +281,10 @@ export function useDailyReport(): UseDailyReportReturn {
   );
 
   /**
-   * Upload report to Bulletin Chain
-   */
-  const uploadReport = useCallback(
-    async (report: DailyReport) => {
-      setError(null);
-      try {
-        return await uploadDailyReport(report);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to upload report";
-        setError(message);
-        throw err;
-      }
-    },
-    [uploadDailyReport]
-  );
-
-  /**
    * Shared report pipeline:
    * 1. Generate report from localStorage data
-   * 2. Encrypt (if a manual key is set)
+   * 2. Encrypt under the merchant's passphrase — required: Bulletin is
+   *    public, so a report never leaves the device in plaintext
    * 3. Upload to Bulletin Chain
    * 4. Mirror CID on-chain via contract (gated by the on-chain toggle), with
    *    `finalize` deciding whether the day is locked
@@ -330,6 +312,11 @@ export function useDailyReport(): UseDailyReportReturn {
 
       try {
         const result = await withReportTimeout((async (): Promise<FinalizeDayResult> => {
+        // Bulletin is public and permanent: refuse before any work rather
+        // than fall back to uploading the report in the clear.
+        const passphrase = getManualPassphrase();
+        if (!passphrase) throw new Error(REPORT_KEY_REQUIRED);
+
         // Identity that scopes the on-chain slot + tags the local record.
         const adminPayload = await loadAdminQrPayload();
         const terminalId = adminPayload?.terminalId ?? "T3RMINAL";
@@ -396,28 +383,15 @@ export function useDailyReport(): UseDailyReportReturn {
           throw new Error("Cannot build a report for a day with no transactions");
         }
 
-        // 2. Encrypt with the manually configured passphrase, if set
-        let reportToUpload: DailyReport | object = report;
-        const manualKey = loadManualKey();
-        if (manualKey) {
-          setPhase("encrypting");
-          const fp = manualKeyFingerprint() ?? "";
-          reportToUpload = encryptReportSymmetric(
-            JSON.stringify(report),
-            manualKey,
-            {
-              date: reportKey,
-              txCount: report.totalTransactions,
-              terminal: merchantAddress.slice(0, 12),
-              keyFingerprint: fp,
-            },
-          );
-          manualKey.fill(0);
-          journeyTracker.milestone(journey, "encrypted");
-          console.log(`[DailyReport] Encrypted with manual key (fp=${fp})`);
-        } else {
-          console.log("[DailyReport] No manual key set — uploading plaintext");
-        }
+        // 2. Encrypt under the merchant's passphrase (scrypt, fresh salt).
+        setPhase("encrypting");
+        const reportToUpload = await encryptReport(JSON.stringify(report), passphrase, {
+          date: reportKey,
+          txCount: report.totalTransactions,
+          terminal: merchantAddress.slice(0, 12),
+        });
+        journeyTracker.milestone(journey, "encrypted");
+        console.log("[DailyReport] Encrypted with the report key (v3)");
 
         // Fail fast on a finalized slot before spending any chain time (the
         // read has been overlapping generate/encrypt since the start).
@@ -496,7 +470,7 @@ export function useDailyReport(): UseDailyReportReturn {
 
         if (finalize) {
           // Z report: the upload must confirm before the slot is locked.
-          uploadResult = await uploadDailyReport(reportToUpload as DailyReport, uploadBytes);
+          uploadResult = await uploadDailyReport(reportToUpload, uploadBytes);
           journeyTracker.milestone(journey, "ipfs-uploaded");
           onChainIndexed = await runReviveMirror();
         } else {
@@ -504,7 +478,7 @@ export function useDailyReport(): UseDailyReportReturn {
           // leg's rejection can mask the other's outcome (runReviveMirror
           // never rejects by construction, but defend against surprises).
           const [uploadOutcome, mirrorOutcome] = await Promise.allSettled([
-            uploadDailyReport(reportToUpload as DailyReport, uploadBytes),
+            uploadDailyReport(reportToUpload, uploadBytes),
             runReviveMirror(),
           ]);
           onChainIndexed = mirrorOutcome.status === "fulfilled" ? mirrorOutcome.value : false;
@@ -617,7 +591,6 @@ export function useDailyReport(): UseDailyReportReturn {
     error,
     generateReport,
     generateReportForSales,
-    uploadReport,
     saveDailyReport,
     savePeriodReport,
     finalizeDailyReport,

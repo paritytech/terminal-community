@@ -1,8 +1,8 @@
 /**
  * Payment measurements, written to the local log.
  *
- *   - `recordPaymentOutcome` — one line per sale: success or failure, with
- *     method, source and the failure reason.
+ *   - `recordPaymentOutcome` — one line per sale: success, partial (the host
+ *     credited less than asked) or failure, with method, source and reason.
  *   - `recordCoinagePaymentPhase` — how long each W3S Coinage phase took:
  *     QR setup, statement delivery, decrypt/match, the host top-up.
  *
@@ -35,7 +35,7 @@ export interface CoinagePaymentPhaseParams {
 }
 
 export interface PaymentOutcomeParams {
-  outcome: "success" | "failure";
+  outcome: "success" | "partial" | "failure";
   /** How the sale settled — W3S Coinage through the host. */
   method: PaymentMethodKind;
   /** Decimal amount string for context. */
@@ -45,7 +45,7 @@ export interface PaymentOutcomeParams {
   saleId?: string;
   terminalId?: string;
   merchantId?: string;
-  /** Populated on failure — the human-readable reason. */
+  /** Populated on failure or partial — the human-readable reason. */
   reason?: string;
 }
 
@@ -54,7 +54,7 @@ function defined(fields: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
 }
 
-/** Record a terminal payment as success or failure. */
+/** Record a terminal payment as success, partial or failure. */
 export function recordPaymentOutcome(params: PaymentOutcomeParams): void {
   const log = params.outcome === "success" ? console.info : console.warn;
   log(
