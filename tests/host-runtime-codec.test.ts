@@ -52,6 +52,26 @@ describe("awaitHostRuntime", () => {
     expect(await onTruApi()).toBe(true);
   });
 
+  it("calls it TrUAPI on a core that injects only the frame transport (trinity #2193 on)", async () => {
+    // What the container leaves on `window` since #2193: the mark, the
+    // transport and the legacy port; `__truapi_localhost` already consumed.
+    g.window = hostWindow({ __HOST_API_TRANSPORT__: { postMessage() {}, subscribe() {} } });
+    expect(isTruApiRuntime()).toBe(true);
+    expect(await awaitHostRuntime()).toBe("truapi");
+    expect(await onTruApi()).toBe(true);
+  });
+
+  it("waits for a frame transport that lands late", async () => {
+    vi.useFakeTimers();
+    const win = hostWindow();
+    g.window = win;
+    const decided = awaitHostRuntime();
+    await vi.advanceTimersByTimeAsync(500);
+    win.__HOST_API_TRANSPORT__ = { postMessage() {}, subscribe() {} };
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await decided).toBe("truapi");
+  });
+
   it("recognises the native container at once", async () => {
     g.window = hostWindow({ __container_callback__: () => {} });
     expect(await awaitHostRuntime()).toBe("native");
