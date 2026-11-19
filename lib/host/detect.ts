@@ -15,8 +15,16 @@ type HostGlobals = {
   __HOST_WEBVIEW_MARK__?: boolean
   __HOST_API_PORT__?: unknown
   __truapi_localhost?: unknown
-  /** Newer cores build the TrUAPI client in the page and hand it over here. */
+  /**
+   * Cores from trinity #872 up to #2193 build the TrUAPI client in the page
+   * and hand it over here.
+   */
   __HOST_API_CLIENT__?: { client?: unknown } | null
+  /**
+   * Cores from trinity #2193 on publish their frame channel here instead, and
+   * no longer publish `__HOST_API_CLIENT__`. Only the TrUAPI container sets it.
+   */
+  __HOST_API_TRANSPORT__?: unknown
   /** The native container installs this when it loads. */
   __container_callback__?: unknown
 }
@@ -62,11 +70,19 @@ export function isInHost(): boolean {
  */
 export function isTruApiRuntime(): boolean {
   const win = hostGlobals()
-  if (!win) return false
-  // `__HOST_API_CLIENT__` first: the lockdown container consumes
-  // `__truapi_localhost`, so on newer cores that one reads as `undefined`
-  // even though the runtime is very much TrUAPI.
-  return win.__HOST_API_CLIENT__ != null || win.__truapi_localhost != null
+  return win != null && hasTruApiMarker(win)
+}
+
+function hasTruApiMarker(win: HostGlobals): boolean {
+  // The lockdown container consumes `__truapi_localhost`, so on newer cores
+  // that one reads as `undefined` even though the runtime is very much
+  // TrUAPI; the container then publishes `__HOST_API_CLIENT__` (older cores)
+  // or `__HOST_API_TRANSPORT__` (trinity #2193 on).
+  return (
+    win.__HOST_API_TRANSPORT__ != null ||
+    win.__HOST_API_CLIENT__ != null ||
+    win.__truapi_localhost != null
+  )
 }
 
 export type HostRuntime = "truapi" | "native"
@@ -111,7 +127,7 @@ async function detectHostRuntime(timeoutMs: number): Promise<HostRuntime> {
   if (!win) return "native"
 
   const settled = (): HostRuntime | null => {
-    if (win.__HOST_API_CLIENT__ != null || win.__truapi_localhost != null) return "truapi"
+    if (hasTruApiMarker(win)) return "truapi"
     if (typeof win.__container_callback__ === "function") return "native"
     return null
   }

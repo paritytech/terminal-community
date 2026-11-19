@@ -17,13 +17,16 @@
  * terminal has to carry both and pick one per launch. `awaitHostRuntime()`
  * makes that choice once (lib/host/detect.ts) and every host module follows it.
  *
- * Between TrUAPI versions the codec follows the host. Newer cores build the
- * client inside the page and publish it on `window.__HOST_API_CLIENT__`, and
- * `@parity/truapi` (0.26 on) uses that client instead of opening its own, so
- * the wire is whatever the two halves of the host already agreed on. Only a
- * core that publishes none (0.16 and its era) gets this SDK's own codec-3
- * client, which it cannot answer; those cores (before trinity #872) are not
- * supported.
+ * Between TrUAPI versions:
+ *   - Cores from trinity #872 to #2193 build the client inside the page and
+ *     publish it on `window.__HOST_API_CLIENT__`. `@parity/truapi` 0.26 uses
+ *     that client instead of opening its own.
+ *   - Cores from #2193 on publish `window.__HOST_API_TRANSPORT__` for SDKs
+ *     from 0.32 on. For older SDKs like ours they keep a legacy
+ *     `__HOST_API_PORT__`, over which the SDK encodes its own frames.
+ *   - Cores before #872 (0.16 and its era) publish neither. They get this
+ *     SDK's own codec-3 client, which they cannot answer, so they are not
+ *     supported.
  *
  * **Everything here is loaded lazily, and that is load-bearing.** Both
  * clients claim `window.__HOST_API_PORT__.onmessage` the moment their
