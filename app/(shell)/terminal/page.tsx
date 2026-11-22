@@ -220,6 +220,22 @@ function TerminalPageInner() {
   // Tip carried over from /tips (planck string). Drives the Subtotal/Tip/Total
   // breakdown on the receipt; the QR `amount` already includes it.
   const [tipPlanck, setTipPlanck] = useState<string | null>(null);
+  // An amount handed over in the URL (/items, /tips), waiting for the account
+  // before it is charged.
+  const [presetAmount, setPresetAmount] = useState<string | null>(null);
+  // Bumped by every Charge and every reset: a pre-flight that comes back after
+  // either belongs to a sale that is gone, and must not arm its QR.
+  const paymentSeq = useRef(0);
+  // The amount being charged, shown while its QR is still being armed.
+  const [chargingAmount, setChargingAmount] = useState<string | null>(null);
+  // The amount the URL handed over, so a keypad charge of a different amount
+  // does not carry that sale's tip and item lines.
+  const presetOrigin = useRef<string | null>(null);
+  // The keypad digits a failed pre-flight left for that amount: Charge on
+  // exactly these digits charges the URL's amount itself, sub-cent tip and all.
+  const presetRetryDigits = useRef<string | null>(null);
+  // The sale whose claim failure was already recorded.
+  const failureRecordedFor = useRef<string | null>(null);
 
   // Preset amount from /items "Charge" flow: ?amount=<plancks>&source=items
   // skips the keypad and jumps straight to the QR screen with that total,
@@ -238,9 +254,18 @@ function TerminalPageInner() {
   useEffect(() => {
     const amountParam = searchParams.get("amount");
     if (!amountParam || !/^\d+$/.test(amountParam)) return;
+    const planckAmount = BigInt(amountParam);
+    // The link goes through the same gates as the keypad: a sale above what
+    // one cheque can carry lands on the keypad with the limit warning, never
+    // behind a QR that could not be paid.
+    const cents = planckAmount / 10n ** BigInt(PUSD_DECIMALS - 2);
+    if (planckAmount <= 0n) return;
+    if (planckAmount > BigInt(MAX_AMOUNT) * 10n ** BigInt(PUSD_DECIMALS)) {
+      setAmountDigits(cents.toString().slice(0, MAX_AMOUNT_DIGITS));
+      setActiveTab("amount");
+      return;
+    }
     const decimal = formatAmountFromPlanck(amountParam, PUSD_DECIMALS);
-    setFinalAmount(decimal);
-    setTerminalState("qr");
 
     if (searchParams.get("source") === "items") {
       const pending = readPendingSale();
@@ -249,8 +274,17 @@ function TerminalPageInner() {
       }
     }
 
+    // A tip larger than the whole sale is not one this app wrote; leave it
+    // off the receipt rather than print a negative subtotal.
     const tipParam = searchParams.get("tip");
-    if (tipParam && /^\d+$/.test(tipParam)) setTipPlanck(tipParam);
+    if (tipParam && /^\d+$/.test(tipParam) && BigInt(tipParam) <= planckAmount) setTipPlanck(tipParam);
+
+    // Charge it like the keypad does — connectivity pre-flight included —
+    // once the account is known. Until then the screen says it is generating.
+    setIsGenerating(true);
+    setTerminalState("qr");
+    presetOrigin.current = decimal;
+    setPresetAmount(decimal);
 
     // Journey starts here — first frame the merchant sees the QR. We measure
     // until the success screen renders (or fail/abandon). Admin identifiers
@@ -442,6 +476,10 @@ function TerminalPageInner() {
   // per transition into the error state.
   useEffect(() => {
     if (coinage.status !== "error") return;
+    // Once per sale: with several cheques a sale can pass through the error
+    // state more than once before it is paid or abandoned.
+    if (coinage.paymentId && failureRecordedFor.current === coinage.paymentId) return;
+    failureRecordedFor.current = coinage.paymentId;
     recordPaymentOutcome({
       outcome: "failure",
       method: "coins",
@@ -456,9 +494,11 @@ function TerminalPageInner() {
 
   useEffect(() => {
     const paymentIncoming =
-      paymentReceived || coinage.status === "claiming" || coinage.status === "paid";
+      paymentReceived ||
+      coinage.status === "paid" ||
+      (coinage.status === "claiming" && !coinage.claimStalled);
     if (paymentIncoming) setShowCancelModal(false);
-  }, [coinage.status, paymentReceived]);
+  }, [coinage.status, coinage.claimStalled, paymentReceived]);
 
   // Mirror the on-screen payment QR onto the host NFC tag (HCE) when the host
   // exposes one, so a customer can tap-to-pay instead of scanning. Same deeplink
@@ -467,12 +507,16 @@ function TerminalPageInner() {
   // ends, the deeplink changes, or we unmount. No-ops when the host has no NFC.
   // Parked behind FEATURES.nfcTapToPay for R1 — off means nothing is emitted
   // and the banner doesn't mention NFC.
-  const paymentQrLive =
+  // Whether the payment QR is on screen — one answer for the QR itself, the
+  // test hook and NFC, so nothing advertises a deeplink the screen hides. It
+  // never comes back once a cheque arrived: the customer may have paid.
+  const qrOnScreen =
     saleInProgress &&
     !!displayQrValue &&
     !paymentReceived &&
-    coinage.status !== "claiming" &&
-    coinage.status !== "paid";
+    !isGenerating &&
+    coinage.status === "waiting";
+  const paymentQrLive = qrOnScreen;
 
   useEffect(() => {
     if (!FEATURES.nfcTapToPay || !paymentQrLive || !displayQrValue) return;
@@ -549,14 +593,18 @@ function TerminalPageInner() {
   // keypad digits in the same tick it calls this.
   const startPayment = async (amountDecimal: string) => {
     if (!account) return;
+    const seq = ++paymentSeq.current;
 
     setConnectivityError(null);
     setIsGenerating(true);
+    setChargingAmount(amountDecimal);
     setTerminalState("qr");
 
     // Don't hand the customer a QR we can't settle — confirm the chain is
     // reachable right now before showing it.
     const unreachable = await connectivity.check();
+    // Cancelled, or charged again, while the probe ran.
+    if (seq !== paymentSeq.current) return;
     if (unreachable) {
       setIsGenerating(false);
       setTerminalState("input");
@@ -564,6 +612,13 @@ function TerminalPageInner() {
       // them so the Amount tab comes back clean; the basket itself is
       // untouched and re-chargeable.
       if (itemsMode && cart.length > 0) setAmountDigits("");
+      // An amount from the URL goes on the keypad, so Charge can try again.
+      else if (presetOrigin.current === amountDecimal) {
+        const digits = (amountToPlanck(amountDecimal, PUSD_DECIMALS) / 10n ** BigInt(PUSD_DECIMALS - 2)).toString();
+        presetRetryDigits.current = digits;
+        setAmountDigits(digits);
+        setActiveTab("amount");
+      }
       setConnectivityError(unreachableCopy(unreachable, true));
       return;
     }
@@ -587,16 +642,50 @@ function TerminalPageInner() {
       })),
     );
     setBasketOpen(false);
+    // The basket's own lines were just set.
+    forgetPresetSale(true);
     void startPayment(centsToDecimal(cents));
+  };
+
+  // A sale other than the one the URL handed over: drop that sale's tip and
+  // item lines, so they do not land on this one's receipt.
+  const forgetPresetSale = (keepItems: boolean) => {
+    if (presetOrigin.current == null) return;
+    presetOrigin.current = null;
+    presetRetryDigits.current = null;
+    setTipPlanck(null);
+    if (!keepItems) setPendingItems([]);
   };
 
   // Keypad → QR: just amount validation, then straight to the payment screen.
   const handleCharge = () => {
     if (!hasAmount || amountOverCoinLimit) return;
+    // The URL's sale again, after a failed pre-flight: charge its exact amount.
+    if (presetOrigin.current != null && presetRetryDigits.current === amountDigits) {
+      void startPayment(presetOrigin.current);
+      return;
+    }
+    forgetPresetSale(false);
     void startPayment(enteredAmount);
   };
 
+  // An amount from the URL is charged once the account is there.
+  useEffect(() => {
+    if (!presetAmount || !account) return;
+    setPresetAmount(null);
+    void startPayment(presetAmount);
+    // startPayment is recreated every render; the preset is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetAmount, account]);
+
   const handleReset = () => {
+    // Whatever pre-flight is still out belongs to this sale.
+    paymentSeq.current++;
+    setIsGenerating(false);
+    setPresetAmount(null);
+    setChargingAmount(null);
+    presetOrigin.current = null;
+    presetRetryDigits.current = null;
     // If a sale was still in progress (no payment yet), tracking treats
     // this as the merchant abandoning — silent no-op if already completed.
     journeyTracker.abandon("terminal-payment");
@@ -1137,12 +1226,19 @@ function TerminalPageInner() {
     // lib/payments/coinage/claim.ts). The customer has already paid, so the
     // QR must not come back; the merchant retries the claim or cancels.
     const claimFailed = coinage.status === "error";
-    const canCancelTransaction = !paymentIncoming && !paymentReceived;
+    // Not while a claim is getting somewhere. While every claim has waited
+    // for its coins too long, the cheque may not have been the customer's,
+    // and the merchant may give up on the sale: its claims stay in the
+    // pending claim, so one that lands after all is still recorded.
+    const canCancelTransaction =
+      !paymentReceived &&
+      coinage.status !== "paid" &&
+      (coinage.status !== "claiming" || coinage.claimStalled);
     // Warning fill while the QR is being armed (connectivity pre-flight or
     // deeplink still computing); the inverted container surface once it's
     // scannable. There is no informational status token — the old brand-blue
     // "waiting" banner is reported as a gap.
-    const generating = isGenerating || !displayQrValue;
+    const generating = isGenerating || (!displayQrValue && !claimFailed);
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex-1 min-h-0 flex flex-col max-w-md mx-auto w-full">
@@ -1189,7 +1285,7 @@ function TerminalPageInner() {
                   data-testid="qr-amount"
                   className="text-display-l font-mono text-fg-primary break-all"
                 >
-                  {finalAmount || enteredAmount}
+                  {finalAmount || chargingAmount || presetAmount || enteredAmount}
                 </span>
                 <span className="text-label-l text-fg-secondary shrink-0">{symbol}</span>
               </div>
@@ -1205,10 +1301,12 @@ function TerminalPageInner() {
               <div
                 data-testid="qr-code"
                 // The value the QR encodes, for tests that play the payer.
-                data-qr-value={!paymentIncoming && !claimFailed ? displayQrValue || undefined : undefined}
+                data-qr-value={qrOnScreen ? displayQrValue || undefined : undefined}
                 className="rounded-container overflow-hidden bg-surface-nested"
               >
-                {paymentIncoming ? (
+                {qrOnScreen && displayQrValue ? (
+                  <QRCodeSVG value={displayQrValue} size={272} level="H" marginSize={2} />
+                ) : paymentIncoming ? (
                   <div className="size-68 flex items-center justify-center">
                     <Loader2 className="size-6 animate-spin text-fg-secondary" />
                   </div>
@@ -1216,8 +1314,6 @@ function TerminalPageInner() {
                   <div className="size-68 flex items-center justify-center">
                     <TriangleAlert className="size-6 text-fg-warning" aria-hidden />
                   </div>
-                ) : displayQrValue ? (
-                  <QRCodeSVG value={displayQrValue} size={272} level="H" marginSize={2} />
                 ) : (
                   <div className="size-68 flex items-center justify-center">
                     <Loader2 className="size-6 animate-spin text-fg-secondary" />
@@ -1234,8 +1330,13 @@ function TerminalPageInner() {
                     : coinage.claimStage === "claiming"
                       ? "Moving the coins into your balance"
                       : "Handing the payment to the Polkadot app"}
-                  {coinage.claimAttempt > 1 ? ` · retry ${coinage.claimAttempt - 1}` : ""}
+                  {coinage.claimRetries > 0 ? ` · retry ${coinage.claimRetries}` : ""}
                   . This can take a minute.
+                </p>
+              )}
+              {coinage.claimStalled && (
+                <p data-testid="coins-claim-stalled" className="text-body-m text-fg-secondary mt-2 text-center max-w-xs">
+                  No coins have arrived yet. If the customer hasn&apos;t paid, you can cancel and charge again.
                 </p>
               )}
               {claimFailed && coinage.error && (
@@ -1252,7 +1353,7 @@ function TerminalPageInner() {
               <div className="shrink-0 pb-5 flex flex-col gap-2">
                 {/* After a failed claim the retry is the screen's main action;
                     Cancel stays beneath it as the quieter alternative. */}
-                {claimFailed && (
+                {claimFailed && coinage.canRetry && (
                   <Button
                     data-testid="btn-retry-claim"
                     onClick={coinage.retryClaim}
@@ -1261,6 +1362,7 @@ function TerminalPageInner() {
                     Retry claim
                   </Button>
                 )}
+
                 {canCancelTransaction && (
                   <Button
                     variant="secondary"

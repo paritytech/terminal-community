@@ -96,6 +96,12 @@ export interface ClaimCoinsOptions {
   topUpId: (attempt: number) => Uint8Array;
   /** Registration number to use — a manual retry passes the next one. */
   attempt?: number;
+  /**
+   * The registration these same coins were last registered under, followed
+   * when the host answers `SourceBusy`; null when they never were. Defaults
+   * to `attempt - 1`, which holds while a sale only ever claims one cheque.
+   */
+  previousAttempt?: number | null;
   /** How often to re-subscribe to this registration when the host drops the subscription. */
   maxResubscribes?: number;
   /** Pause before a re-subscribe. */
@@ -104,6 +110,12 @@ export interface ClaimCoinsOptions {
   signal?: AbortSignal;
   onStatus?: (status: TopUpStatusEvent) => void;
   onResubscribe?: (resubscribe: number, error: unknown) => void;
+  /**
+   * The registration the claim is following, once the host has accepted it
+   * (or, on SourceBusy, the earlier one it follows instead). Statuses and the
+   * outcome are about this registration.
+   */
+  onFollow?: (attempt: number) => void;
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -303,6 +315,7 @@ export function awaitSettledTopUpStatus(
  */
 export async function claimCoins(opts: ClaimCoinsOptions): Promise<ClaimOutcome> {
   const attempt = Math.max(1, opts.attempt ?? 1);
+  const previousAttempt = opts.previousAttempt === undefined ? attempt - 1 : opts.previousAttempt;
   const maxResubscribes = Math.max(0, opts.maxResubscribes ?? DEFAULT_MAX_RESUBSCRIBES);
   const backoffMs = opts.backoffMs ?? DEFAULT_CLAIM_BACKOFF_MS;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -312,22 +325,30 @@ export async function claimCoins(opts: ClaimCoinsOptions): Promise<ClaimOutcome>
   };
 
   let id = opts.topUpId(attempt);
+  let followed = attempt;
 
   // 1. Register. AlreadyExists means this very registration is already known
   //    (a retry after a reload) — follow it. SourceBusy means an earlier
-  //    registration of these coins is still live — follow that one instead.
+  //    registration of these coins is still live — follow that one instead,
+  //    when we know which it is.
   const register = async () => {
     try {
       await opts.host.topUp(amountPlanck, keys, id);
     } catch (error) {
       if (!(error instanceof TopUpRefusal)) throw error;
-      if (error.kind === "AlreadyExists") return;
-      if (error.kind === "SourceBusy" && attempt > 1) {
-        id = opts.topUpId(attempt - 1);
+      if (error.kind === "AlreadyExists") {
+        opts.onFollow?.(followed);
+        return;
+      }
+      if (error.kind === "SourceBusy" && previousAttempt != null && previousAttempt >= 1) {
+        followed = previousAttempt;
+        id = opts.topUpId(previousAttempt);
+        opts.onFollow?.(followed);
         return;
       }
       throw error;
     }
+    opts.onFollow?.(followed);
   };
 
   throwIfCancelled();

@@ -210,6 +210,17 @@ describe("pending claims", () => {
     await dropPendingClaim("pay-n");
   });
 
+  it("does not wait on one cheque's registration that never settles to find another's that credited", async () => {
+    // One sale can hold the registrations of several cheques: here a cheque
+    // whose coins never come (newest) and the customer's, already credited.
+    const [real, junk] = ids("pay-r", 1, 2);
+    await savePendingClaim({ paymentId: "pay-r", requestedAmount: "3.00", topUpIds: [real, junk], draft });
+    const d = deps(fakeHost({ [junk]: [{ type: "detecting" }], [real]: [{ type: "claimed", finalized: true }] }).host);
+    expect(await resumePendingClaims({ ...d.deps, ttlMs: 60_000 })).toBe(1);
+    expect(d.added[0]).toMatchObject({ saleId: "pay-r", topUpId: real });
+    expect(await getPendingClaims()).toEqual([]);
+  });
+
   it("records a claim once when two resumes overlap", async () => {
     const [id1] = ids("pay-p", 1);
     await savePendingClaim({ paymentId: "pay-p", requestedAmount: "1.00", topUpIds: [id1], draft });

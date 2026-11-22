@@ -4,14 +4,9 @@ import { useEffect } from "react";
 import { useAccount } from "@/lib/web3";
 import { awaitHostRuntime, isInHost } from "@/lib/host/detect";
 import { hostPaymentsAvailable } from "@/lib/host/payments";
-import {
-  claimStatusHost,
-  resumePendingTopUpWatches,
-  watchTopUpFinality,
-} from "@/lib/payments/coinage/topup-watcher";
+import { resumePendingTopUpWatches } from "@/lib/payments/coinage/topup-watcher";
 import { resumePendingClaims } from "@/lib/payments/coinage/pending-claims";
-import { findFirstByField } from "@/lib/storage/host-storage";
-import type { SaleRecord } from "@/lib/storage/types";
+import { resumeDeps } from "@/lib/payments/coinage/claim-handoff";
 
 /**
  * Re-arms the background claim watcher for every coins sale that was recorded
@@ -39,11 +34,7 @@ export function TopUpWatcherBoot() {
         return Promise.all([
           resumePendingTopUpWatches(),
           // Claims an earlier launch handed to the host but never saw settle.
-          resumePendingClaims({
-            host: claimStatusHost(),
-            saleExists: async (saleId) => !!(await findFirstByField<SaleRecord>("sales", "saleId", saleId)),
-            watchFinality: watchTopUpFinality,
-          }),
+          resumePendingClaims(resumeDeps()),
         ]);
       })
       .catch((err) => {
