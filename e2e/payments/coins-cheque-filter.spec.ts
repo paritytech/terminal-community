@@ -67,6 +67,13 @@ test.describe("coins cheque filter — cheques the terminal must ignore", () => 
       log: () => /decrypt failed \(len=\d+\): .*amount must match/,
     },
     {
+      // Above what a cheque may carry: the amount check used to throw out of
+      // the statement handler here instead of skipping it.
+      name: "a cheque for more than the cheque limit (99999.00)",
+      data: (req) => buildCheque(req, randomCoins(2), { amount: "99999.00" }).data,
+      log: () => /amount mismatch: got "99999\.00", want "12\.50" — skip/,
+    },
+    {
       name: "a cheque for another payment id on this topic",
       data: (req) => buildCheque(req, randomCoins(2), { id: otherId }).data,
       log: () => new RegExp(`id mismatch: got "${otherId}", want "[0-9a-f]{32}" — skip`),

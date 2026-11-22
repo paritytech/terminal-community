@@ -147,6 +147,44 @@ describe("claimCoins (register once, follow until the sale settles)", () => {
     expect(h.subscribedIds).toEqual([hex(idFor(1))]);
   });
 
+  it("on SourceBusy follows the registration these coins last had, not simply the one before", async () => {
+    // Registration 3 is this cheque's second; its first was registration 1
+    // (registration 2 belonged to another cheque of the same sale).
+    const h = scriptedHost([new TopUpRefusal("SourceBusy")], [[{ type: "claimed", finalized: true }]]);
+    const outcome = await claimCoins({
+      host: h.host,
+      amountPlanck: AMOUNT,
+      keys: KEYS,
+      topUpId: idFor,
+      attempt: 3,
+      previousAttempt: 1,
+      sleep: noSleep,
+    });
+    expect(outcome).toMatchObject({ kind: "claimed", topUpId: idFor(1) });
+    expect(h.subscribedIds).toEqual([hex(idFor(1))]);
+  });
+
+  it("reports which registration it follows: its own when accepted, the earlier one on SourceBusy, none when refused", async () => {
+    const followed: number[] = [];
+    const accepted = scriptedHost([undefined], [[{ type: "claimed", finalized: true }]]);
+    await claimCoins({ host: accepted.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 4, onFollow: (n) => followed.push(n), sleep: noSleep });
+    const busy = scriptedHost([new TopUpRefusal("SourceBusy")], [[{ type: "claimed", finalized: true }]]);
+    await claimCoins({ host: busy.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 3, previousAttempt: 1, onFollow: (n) => followed.push(n), sleep: noSleep });
+    const refused = scriptedHost([new TopUpRefusal("InvalidSource")], []);
+    await expect(
+      claimCoins({ host: refused.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, onFollow: (n) => followed.push(n), sleep: noSleep }),
+    ).rejects.toBeInstanceOf(TopUpRefusal);
+    expect(followed).toEqual([4, 1]);
+  });
+
+  it("surfaces SourceBusy for coins this sale never registered, whatever the attempt number", async () => {
+    const h = scriptedHost([new TopUpRefusal("SourceBusy")], []);
+    await expect(
+      claimCoins({ host: h.host, amountPlanck: AMOUNT, keys: KEYS, topUpId: idFor, attempt: 2, previousAttempt: null, sleep: noSleep }),
+    ).rejects.toMatchObject({ kind: "SourceBusy" });
+    expect(h.subscribedIds).toEqual([]);
+  });
+
   it("re-registers the same id and re-subscribes when the host drops the status subscription", async () => {
     const h = scriptedHost(
       [undefined, new TopUpRefusal("AlreadyExists")],

@@ -146,6 +146,10 @@ const following = new Set<string>();
 export function markClaimInSession(paymentId: string): void {
   inSession.add(paymentId);
 }
+/** This document no longer follows the claim itself: a resume may take it (./claim-handoff.ts). */
+export function releaseClaimFromSession(paymentId: string): void {
+  inSession.delete(paymentId);
+}
 
 function isNotFound(error: unknown): boolean {
   const payload = (error as { payload?: unknown })?.payload;
@@ -208,26 +212,50 @@ async function resumeClaim(claim: PendingClaim, deps: ResumeDeps): Promise<boole
       return false;
     }
 
-    // Newest registration first. One that credited nothing does not mean an
-    // older one didn't: a retry can follow a registration that already took
-    // the coins, so keep going until one credited or all are accounted for.
-    let credited: { status: SettledTopUpStatus; topUpId: string } | null = null;
-    let unresolved = false;
-    for (const topUpId of [...claim.topUpIds].reverse()) {
-      let status: SettledTopUpStatus;
-      try {
-        status = await awaitTopUpStatus(deps.host, topUpIdFromHex(topUpId), settles, abort.signal);
-      } catch (error) {
-        if (abort.signal.aborted) {
-          unresolved = true;
-          break;
-        }
-        if (!isNotFound(error)) unresolved = true;
-        continue;
+    // Every registration at once, and the first that credited wins. One that
+    // credited nothing does not mean another didn't: a retry can follow a
+    // registration that already took the coins, and one sale can hold the
+    // registrations of several cheques (./cheque-intake.ts), one of which
+    // may wait for coins that never come. Followed one by one, that one
+    // would hold up the rest until the TTL.
+    const found: { credited: { status: SettledTopUpStatus; topUpId: string } | null; unresolved: boolean } = {
+      credited: null,
+      unresolved: false,
+    };
+    const ids = [...claim.topUpIds].reverse();
+    await new Promise<void>((resolve) => {
+      let open = ids.length;
+      if (open === 0) resolve();
+      for (const topUpId of ids) {
+        awaitTopUpStatus(deps.host, topUpIdFromHex(topUpId), settles, abort.signal)
+          .then(
+            (status) => {
+              if (found.credited) return;
+              if (status.type === "claimed" || (status.type === "claimedPartially" && status.actualClaimed > 0n)) {
+                found.credited = { status, topUpId };
+                resolve();
+              }
+            },
+            (error) => {
+              if (found.credited) return;
+              if (abort.signal.aborted || !isNotFound(error)) found.unresolved = true;
+            },
+          )
+          .finally(() => {
+            open -= 1;
+            if (open === 0) resolve();
+          });
       }
-      if (status.type === "claimed" || (status.type === "claimedPartially" && status.actualClaimed > 0n)) {
-        credited = { status, topUpId };
-        break;
+    });
+    const { credited, unresolved } = found;
+    if (credited) {
+      // Stop following the others. One of them may still credit (another
+      // cheque of the same sale); recording the sale drops the record that
+      // lists them, so say which they were.
+      abort.abort();
+      const others = claim.topUpIds.filter((id) => id !== credited.topUpId);
+      if (others.length > 0) {
+        console.warn(`[PendingClaims] ${paymentId}: recorded ${credited.topUpId}; also registered: ${others.join(", ")}`);
       }
     }
 
