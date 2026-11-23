@@ -47,9 +47,16 @@ export function useOnchainIndexing(): {
   useEffect(() => {
     let alive = true;
     const refresh = () => {
-      void isOnchainIndexingEnabled().then((v) => {
-        if (alive) setEnabled(v);
-      });
+      void isOnchainIndexingEnabled().then(
+        (v) => {
+          if (alive) setEnabled(v);
+        },
+        (err) => {
+          // Unreadable: keep the default (on) rather than loading forever.
+          console.warn("[OnchainIndexing] setting unreadable:", err);
+          if (alive) setEnabled((prev) => prev ?? true);
+        },
+      );
     };
     refresh();
     const off = onStorageChange("settings", refresh);

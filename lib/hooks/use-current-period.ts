@@ -30,10 +30,11 @@ export function useCurrentPeriod() {
 
   useEffect(() => {
     const load = () =>
-      getAllDailyReports().then((r) => {
-        setReports(r);
-        setIsLoading(false);
-      });
+      getAllDailyReports()
+        .then((r) => setReports(r))
+        // The storage banner says why; stop loading. A recovery refetches.
+        .catch((err) => console.warn("[CurrentPeriod] reports unreadable:", err))
+        .finally(() => setIsLoading(false));
     void load();
     return onStorageChange("dailyReports", () => void load());
   }, []);
@@ -48,7 +49,9 @@ export function useCurrentPeriod() {
       const today = todayString();
       const dayStart = new Date(today + "T00:00:00");
       const dayEnd = new Date(today + "T23:59:59.999");
-      void getSalesForMerchantByDate(merchant, dayStart, dayEnd).then(setTodaySales);
+      void getSalesForMerchantByDate(merchant, dayStart, dayEnd)
+        .then(setTodaySales)
+        .catch((err) => console.warn("[CurrentPeriod] sales unreadable:", err));
     };
     load();
     return onStorageChange("sales", load);

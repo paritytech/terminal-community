@@ -129,6 +129,14 @@ export function useCheckoutItems(): {
           setItems(list);
           setIsLoading(false);
         },
+        (err) => {
+          // Settings unreadable: the storage banner says why. Show the plain
+          // keypad rather than loading forever; a recovery refetches.
+          console.warn("[CheckoutItems] settings unreadable:", err);
+          if (!alive) return;
+          setEnabledState((prev) => prev ?? false);
+          setIsLoading(false);
+        },
       );
     };
     refresh();

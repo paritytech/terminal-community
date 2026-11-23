@@ -40,6 +40,10 @@ import { PUSD_ASSET_ID, PUSD_DECIMALS } from "@/lib/utils/asset-ids";
 import { useAssetSymbol, getAssetSymbol } from "@/lib/utils/asset-metadata";
 import { formatAmountFromPlanck, amountToPlanck } from "@/lib/utils/format";
 import { useAddSale } from "@/lib/storage";
+import { getSaleStorageHealth, probeStorage } from "@/lib/storage/host-storage";
+import { useSaleStorageHealth } from "@/lib/storage/hooks";
+import { describeStorageFailure, isStorageFailureCopy } from "@/components/storage-health-banner";
+import { keepUnsavedSale, saveUnsavedSales, useUnsavedSales } from "@/lib/payments/coinage/unsaved-sales";
 import { normalizeToAssetHubAddress } from "@/lib/utils/address";
 import {
   clearPendingSale,
@@ -180,6 +184,12 @@ function TerminalPageInner() {
   // Coins claim that credited less than the cheque asked for (the host will
   // claim no more) — shown on the completed screen next to the recorded amount.
   const [coinsShortfall, setCoinsShortfall] = useState<{ requested: string; credited: string; missing: string } | null>(null);
+  // Paid sales the host's storage refused to keep (lib/payments/coinage/
+  // unsaved-sales.ts): kept across Done and navigation, saved once the
+  // storage takes writes again. The completed screen flags this sale's.
+  const unsavedSales = useUnsavedSales();
+  const [savingAgain, setSavingAgain] = useState(false);
+  const storageHealth = useSaleStorageHealth();
   const [svgReceipt, setSvgReceipt] = useState<string | null>(null);
   const [finalAmount, setFinalAmount] = useState<string>("");
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -239,8 +249,6 @@ function TerminalPageInner() {
     const amountParam = searchParams.get("amount");
     if (!amountParam || !/^\d+$/.test(amountParam)) return;
     const decimal = formatAmountFromPlanck(amountParam, PUSD_DECIMALS);
-    setFinalAmount(decimal);
-    setTerminalState("qr");
 
     if (searchParams.get("source") === "items") {
       const pending = readPendingSale();
@@ -251,6 +259,18 @@ function TerminalPageInner() {
 
     const tipParam = searchParams.get("tip");
     if (tipParam && /^\d+$/.test(tipParam)) setTipPlanck(tipParam);
+
+    // Not while the storage cannot keep the sale: the amount waits on the
+    // keypad, with its items and tip (see startPayment).
+    const health = getSaleStorageHealth();
+    if (!health.ok) {
+      setAmountDigits((BigInt(amountParam) / 10n ** BigInt(PUSD_DECIMALS - 2)).toString().slice(0, MAX_AMOUNT_DIGITS));
+      setActiveTab("amount");
+      setConnectivityError(describeStorageFailure(health.kind));
+      return;
+    }
+    setFinalAmount(decimal);
+    setTerminalState("qr");
 
     // Journey starts here — first frame the merchant sees the QR. We measure
     // until the success screen renders (or fail/abandon). Admin identifiers
@@ -360,16 +380,31 @@ function TerminalPageInner() {
       unitPrice: formatAmountFromPlanck(line.pricePlanks, PUSD_DECIMALS),
     }));
 
+    const record = coinsSaleRecord(coinsSaleDraft(), result, receivedAt);
     try {
-      await addSale(coinsSaleRecord(coinsSaleDraft(), result, receivedAt));
-      // Recorded: the pending claim kept for a restart has done its job.
-      await dropPendingClaim(result.paymentId);
+      try {
+        await addSale(record);
+      } catch (err) {
+        // Not kept: hold it until the storage takes it, and say so.
+        keepUnsavedSale({
+          record,
+          paymentId: result.paymentId,
+          topUpIdHex: result.topUpId,
+          finalized: result.finalized,
+        });
+        throw err;
+      }
       journeyTracker.milestone("terminal-payment", "sale-saved");
       if (!result.finalized) {
         // Fire-and-forget: survives this page unmounting, and is re-armed on
         // the next launch for anything still confirming.
         watchTopUpFinality({ saleId: result.paymentId, topUpIdHex: result.topUpId });
       }
+      // Recorded: the pending claim kept for a restart has done its job. A
+      // failure here leaves a stale claim the next launch drops.
+      await dropPendingClaim(result.paymentId).catch((err) => {
+        console.warn("[Terminal] Dropping the pending claim failed:", err);
+      });
     } catch (err) {
       console.error("[Terminal] Failed to save coins sale:", err);
       captureError(err, { component: "terminal", phase: "save-sale-coins" }, {
@@ -554,6 +589,20 @@ function TerminalPageInner() {
     setIsGenerating(true);
     setTerminalState("qr");
 
+    // A sale the host's storage cannot keep must not be taken: neither its
+    // pending claim nor its record would survive. Look again first, the way
+    // a sale would use it — the storage may have room by now.
+    if (!getSaleStorageHealth().ok) {
+      const health = await probeStorage();
+      if (!health.ok) {
+        setIsGenerating(false);
+        setTerminalState("input");
+        if (itemsMode && cart.length > 0) setAmountDigits("");
+        setConnectivityError(describeStorageFailure(health.kind));
+        return;
+      }
+    }
+
     // Don't hand the customer a QR we can't settle — confirm the chain is
     // reachable right now before showing it.
     const unreachable = await connectivity.check();
@@ -595,6 +644,21 @@ function TerminalPageInner() {
     if (!hasAmount || amountOverCoinLimit) return;
     void startPayment(enteredAmount);
   };
+
+  const saveSaleAgain = async () => {
+    if (savingAgain) return;
+    setSavingAgain(true);
+    try {
+      await probeStorage();
+      await saveUnsavedSales();
+    } finally {
+      setSavingAgain(false);
+    }
+  };
+
+  // A storage refusal on the keypad goes away once the storage recovers.
+  const keypadError =
+    connectivityError && storageHealth.ok && isStorageFailureCopy(connectivityError) ? null : connectivityError;
 
   const handleReset = () => {
     // If a sale was still in progress (no payment yet), tracking treats
@@ -750,13 +814,13 @@ function TerminalPageInner() {
 
     // Error tint (bg-action-error) + error text: quiet enough to sit under the
     // keypad the whole time the terminal is offline.
-    const connectivityWarning = (!connectivity.isOnline || connectivityError) && (
+    const connectivityWarning = (!connectivity.isOnline || keypadError) && (
       <div
         data-testid="terminal-connectivity-warning"
         className="rounded-nested bg-action-error px-4 py-3 text-center mt-3"
       >
         <p className="text-label-m text-fg-error">
-          {connectivityError ?? unreachableCopy(connectivity.unreachableReason, false)}
+          {keypadError ?? unreachableCopy(connectivity.unreachableReason, false)}
         </p>
       </div>
     );
@@ -1089,13 +1153,13 @@ function TerminalPageInner() {
               <KeypadGrid onDigit={pressDigit} onBackspace={backspaceDigit} />
 
               {/* Connectivity warning — periodic offline status or a blocked attempt */}
-              {(!connectivity.isOnline || connectivityError) && (
+              {(!connectivity.isOnline || keypadError) && (
                 <div
                   data-testid="terminal-connectivity-warning"
                   className="rounded-nested bg-action-error px-4 py-3 text-center mt-2"
                 >
                   <p className="text-label-m text-fg-error">
-                    {connectivityError ??
+                    {keypadError ??
                       unreachableCopy(connectivity.unreachableReason, false)}
                   </p>
                 </div>
@@ -1395,6 +1459,27 @@ function TerminalPageInner() {
                 Not paid in full: {coinsShortfall.missing} {symbol} is missing. Only{" "}
                 {coinsShortfall.credited} of {coinsShortfall.requested} {symbol} arrived.
               </p>
+            )}
+            {saleId && unsavedSales.some((s) => s.paymentId === saleId) && (
+              <div
+                data-testid="sale-not-saved"
+                role="alert"
+                className="rounded-nested bg-action-error px-4 py-3 mb-6 flex flex-col gap-2"
+              >
+                <p className="text-label-m text-fg-error">
+                  The payment arrived, but this sale couldn&apos;t be saved in the Polkadot app. It won&apos;t
+                  show in History or reports until it is.
+                </p>
+                <Button
+                  variant="secondary"
+                  data-testid="btn-save-sale-again"
+                  disabled={savingAgain}
+                  onClick={() => void saveSaleAgain()}
+                  className="self-start h-auto py-2 px-4 text-label-m"
+                >
+                  {savingAgain ? "Saving…" : "Save again"}
+                </Button>
+              </div>
             )}
 
             {/* Receipt note typed on the amount screen */}

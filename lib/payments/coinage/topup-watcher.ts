@@ -63,6 +63,8 @@ export interface TopUpWatcherDeps {
   /** Re-subscribes allowed when the host drops the subscription (NotFound excluded). */
   maxResubscribes?: number;
   backoffMs?: number;
+  /** Pause between tries to write a known last word the storage refused. */
+  storageRetryMs?: number;
 }
 
 const WATCH_TTL_MS = 60 * 60 * 1000;
@@ -122,25 +124,57 @@ async function applyFinal(
   target: TopUpWatchTarget,
   status: FinalTopUpStatus,
   deps: TopUpWatcherDeps,
+  firstTry = true,
 ): Promise<void> {
   switch (status.type) {
     case "claimed":
-      log(`${target.saleId}: claim finalized`);
+      if (firstTry) log(`${target.saleId}: claim finalized`);
       await deps.markSaleFinalized(target.saleId);
       return;
     case "claimedPartially":
-      log(`${target.saleId}: claim settled partially, credited ${status.actualClaimed}`);
-      captureWarning("coins claim settled partially after the sale was recorded", {
-        saleId: target.saleId,
-        credited: status.actualClaimed.toString(),
-      });
+      if (firstTry) {
+        log(`${target.saleId}: claim settled partially, credited ${status.actualClaimed}`);
+        captureWarning("coins claim settled partially after the sale was recorded", {
+          saleId: target.saleId,
+          credited: status.actualClaimed.toString(),
+        });
+      }
       await deps.recordSaleClaimShortfall(target.saleId, status.actualClaimed);
       return;
     case "notClaimed":
-      log(`${target.saleId}: claim reverted — nothing landed`);
-      captureWarning("coins claim reverted after the sale was recorded", { saleId: target.saleId });
+      if (firstTry) {
+        log(`${target.saleId}: claim reverted — nothing landed`);
+        captureWarning("coins claim reverted after the sale was recorded", { saleId: target.saleId });
+      }
       await deps.markSaleReverted(target.saleId);
       return;
+  }
+}
+
+/** How often to try writing a known last word again while the storage refuses it. */
+const STORAGE_RETRY_MS = 15_000;
+
+/**
+ * The host's last word is known; only writing it to the sale failed (the
+ * storage refused). Keep trying until it lands or the watch ends — never
+ * re-subscribe for it, and never give up as "dropped" over a storage error.
+ */
+async function writeFinalWhenStored(
+  target: TopUpWatchTarget,
+  final: FinalTopUpStatus,
+  deps: TopUpWatcherDeps,
+  signal: AbortSignal,
+): Promise<"final" | "aborted"> {
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (;;) {
+    await sleep(deps.storageRetryMs ?? STORAGE_RETRY_MS);
+    if (signal.aborted) return "aborted";
+    try {
+      await applyFinal(target, final, deps, false);
+      return "final";
+    } catch (err) {
+      log(`${target.saleId}: still can't write the claim's last word (${String(err)})`);
+    }
   }
 }
 
@@ -160,10 +194,9 @@ export async function runTopUpWatch(
   const id = topUpIdFromHex(target.topUpIdHex);
 
   for (let resubscribe = 0; ; resubscribe++) {
+    let final: FinalTopUpStatus;
     try {
-      const final = await awaitTopUpStatus(deps.host, id, isFinalTopUpStatus, signal);
-      await applyFinal(target, final, deps);
-      return "final";
+      final = await awaitTopUpStatus(deps.host, id, isFinalTopUpStatus, signal);
     } catch (error) {
       if (signal.aborted) return "aborted";
       const payload = (error as { payload?: unknown })?.payload;
@@ -187,6 +220,14 @@ export async function runTopUpWatch(
       log(`${target.saleId}: subscription dropped (${String(error)}) — re-subscribing`);
       await sleep(backoffMs);
       if (signal.aborted) return "aborted";
+      continue;
+    }
+    try {
+      await applyFinal(target, final, deps);
+      return "final";
+    } catch (err) {
+      log(`${target.saleId}: the claim's last word is ${final.type}, but writing it failed (${String(err)}) — retrying`);
+      return writeFinalWhenStored(target, final, deps, signal);
     }
   }
 }

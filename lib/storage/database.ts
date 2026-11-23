@@ -1,16 +1,16 @@
 /**
  * T3RMINAL Storage Layer
  *
- * Uses host API localStorage (persisted by Polkadot Desktop) when in host.
- * Falls back to in-memory storage when outside host.
- * Provides the same API as the previous Dexie implementation.
+ * Uses the host's local storage inside a host, memory outside one (see
+ * ./host-storage.ts). Every change runs under its table's lock, and a host
+ * failure rejects instead of being swallowed.
  */
 
 import {
   readTable,
-  writeTable,
+  mutateTable,
   addRecord,
-  updateRecord,
+  updateWhere,
   findByField,
   findFirstByField,
   clearTable,
@@ -40,18 +40,35 @@ const TABLES = {
 
 // ========== CSV EXPORT REPORTS ==========
 
-// Cap how many generated CSVs we keep — each record embeds the full CSV text,
-// and host localStorage is a shared, finite budget.
+// Cap the generated CSVs we keep — each record embeds the full CSV text, and
+// host localStorage is a shared, finite budget. By count and by size: one
+// 92-day export can be larger than twenty one-day ones, and a write the host
+// refuses as full fails the sale writes after it too.
 const MAX_CSV_REPORTS = 20;
+const MAX_CSV_CACHE_CHARS = 1_000_000;
 
-export async function addCsvReport(report: Omit<CsvReportRecord, 'id'>): Promise<number> {
-  const all = await readTable<CsvReportRecord>(TABLES.csvReports);
-  const next = [...all]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, MAX_CSV_REPORTS - 1);
-  const record = { ...report, id: Date.now() };
-  await writeTable(TABLES.csvReports, [record, ...next]);
-  return record.id;
+/**
+ * Keep the export for re-download. Resolves to its id, or null when it alone
+ * is too large to keep (it can still be downloaded now).
+ */
+export async function addCsvReport(report: Omit<CsvReportRecord, 'id'>): Promise<number | null> {
+  const size = (r: Pick<CsvReportRecord, 'csv'>) => r.csv?.length ?? 0;
+  if (size(report) > MAX_CSV_CACHE_CHARS) return null;
+  return mutateTable<CsvReportRecord, number>(TABLES.csvReports, (all) => {
+    const id = Date.now();
+    const record = { ...report, id } as CsvReportRecord;
+    const kept: CsvReportRecord[] = [record];
+    let total = size(record);
+    const newestFirst = [...all].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+    for (const r of newestFirst) {
+      if (kept.length >= MAX_CSV_REPORTS || total + size(r) > MAX_CSV_CACHE_CHARS) break;
+      kept.push(r);
+      total += size(r);
+    }
+    return { records: kept, result: id };
+  });
 }
 
 /** Newest first. */
@@ -64,11 +81,25 @@ export async function getAllCsvReports(): Promise<CsvReportRecord[]> {
 
 // ========== SALES ==========
 
+/**
+ * Record a sale once. A sale whose `saleId` is already stored (the in-session
+ * path and a resume both settling one claim, say) is not added again; the
+ * stored row's id is returned.
+ */
 export async function addSaleRecord(sale: Omit<SaleRecord, 'id' | 'createdAt'>): Promise<number> {
-  return addRecord<SaleRecord>(TABLES.sales, {
-    ...sale,
-    createdAt: new Date(),
-  } as SaleRecord);
+  return mutateTable<SaleRecord, number>(TABLES.sales, (records) => {
+    const existing = records.find((r) => r.saleId === sale.saleId);
+    if (existing?.id != null) return { records: null, result: existing.id };
+    let maxId = 0;
+    for (const r of records) if (typeof r.id === 'number' && r.id > maxId) maxId = r.id;
+    const id = maxId + 1;
+    return { records: [...records, { ...sale, id, createdAt: new Date() } as SaleRecord], result: id };
+  });
+}
+
+/** Change every stored row of one sale (legacy duplicates included). */
+function updateSale(saleId: string, update: (sale: SaleRecord) => Partial<SaleRecord> | null): Promise<number> {
+  return updateWhere<SaleRecord>(TABLES.sales, (s) => s.saleId === saleId, update);
 }
 
 export async function getSalesByMerchant(merchantAddress: string, limit?: number): Promise<SaleRecord[]> {
@@ -110,14 +141,11 @@ export async function searchSales(address: string, searchTerm: string): Promise<
 }
 
 export async function updateSyncStatus(saleId: string, status: SaleRecord['syncStatus'], error?: string): Promise<void> {
-  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
-  if (sale?.id) {
-    await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
-      syncStatus: status,
-      syncedAt: status === 'synced' ? new Date() : undefined,
-      syncError: error,
-    } as Partial<SaleRecord>);
-  }
+  await updateSale(saleId, () => ({
+    syncStatus: status,
+    syncedAt: status === 'synced' ? new Date() : undefined,
+    syncError: error,
+  }) as Partial<SaleRecord>);
 }
 
 /**
@@ -127,11 +155,7 @@ export async function updateSyncStatus(saleId: string, status: SaleRecord['syncS
  * timestamp.
  */
 export async function markSaleFinalized(saleId: string, at: Date = new Date()): Promise<void> {
-  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
-  if (!sale?.id || sale.finalizedAt) return;
-  await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
-    finalizedAt: at,
-  } as Partial<SaleRecord>);
+  await updateSale(saleId, (sale) => (sale.finalizedAt ? null : ({ finalizedAt: at } as Partial<SaleRecord>)));
 }
 
 /**
@@ -141,15 +165,18 @@ export async function markSaleFinalized(saleId: string, at: Date = new Date()): 
  * Idempotent for an already-final sale.
  */
 export async function recordSaleClaimShortfall(saleId: string, creditedPlanck: bigint): Promise<void> {
-  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
-  if (!sale?.id || sale.finalizedAt || sale.revertedAt) return;
-  await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
-    requestedAmount: sale.requestedAmount ?? sale.amount,
-    requestedAmountPlanck: sale.requestedAmountPlanck ?? sale.amountPlanck,
-    amount: formatAmountFromPlanck(creditedPlanck.toString(), PUSD_DECIMALS),
-    amountPlanck: creditedPlanck.toString(),
-    finalizedAt: new Date(),
-  } as Partial<SaleRecord>);
+  const at = new Date();
+  await updateSale(saleId, (sale) =>
+    sale.finalizedAt || sale.revertedAt
+      ? null
+      : ({
+          requestedAmount: sale.requestedAmount ?? sale.amount,
+          requestedAmountPlanck: sale.requestedAmountPlanck ?? sale.amountPlanck,
+          amount: formatAmountFromPlanck(creditedPlanck.toString(), PUSD_DECIMALS),
+          amountPlanck: creditedPlanck.toString(),
+          finalizedAt: at,
+        } as Partial<SaleRecord>),
+  );
 }
 
 /**
@@ -158,11 +185,9 @@ export async function recordSaleClaimShortfall(saleId: string, creditedPlanck: b
  * totals skip it. Idempotent for an already-final sale.
  */
 export async function markSaleReverted(saleId: string, at: Date = new Date()): Promise<void> {
-  const sale = await findFirstByField<SaleRecord>(TABLES.sales, 'saleId', saleId);
-  if (!sale?.id || sale.finalizedAt || sale.revertedAt) return;
-  await updateRecord<SaleRecord>(TABLES.sales, sale.id, {
-    revertedAt: at,
-  } as Partial<SaleRecord>);
+  await updateSale(saleId, (sale) =>
+    sale.finalizedAt || sale.revertedAt ? null : ({ revertedAt: at } as Partial<SaleRecord>),
+  );
 }
 
 /** Coins sales recorded on best-block whose claim has no last word yet. */
@@ -207,14 +232,17 @@ export async function getPendingPayments(merchantAddress: string): Promise<Pendi
 // ========== SETTINGS ==========
 
 export async function setSetting(key: string, value: string): Promise<void> {
-  const all = await readTable<AppSettings>(TABLES.settings);
-  const idx = all.findIndex((s) => s.key === key);
-  if (idx >= 0) {
-    all[idx] = { ...all[idx], value, updatedAt: new Date() };
-    await writeTable(TABLES.settings, all);
-  } else {
-    await addRecord<AppSettings>(TABLES.settings, { key, value, updatedAt: new Date() } as AppSettings);
-  }
+  await mutateTable<AppSettings>(TABLES.settings, (all) => {
+    const idx = all.findIndex((s) => s.key === key);
+    if (idx >= 0) {
+      const next = [...all];
+      next[idx] = { ...next[idx], value, updatedAt: new Date() };
+      return { records: next, result: undefined };
+    }
+    let maxId = 0;
+    for (const s of all) if (typeof s.id === 'number' && s.id > maxId) maxId = s.id;
+    return { records: [...all, { id: maxId + 1, key, value, updatedAt: new Date() } as AppSettings], result: undefined };
+  });
 }
 
 export async function getSetting(key: string): Promise<string | undefined> {
@@ -223,24 +251,24 @@ export async function getSetting(key: string): Promise<string | undefined> {
 }
 
 export async function deleteSetting(key: string): Promise<void> {
-  const all = await readTable<AppSettings>(TABLES.settings);
-  const next = all.filter((s) => s.key !== key);
-  if (next.length === all.length) return;
-  await writeTable(TABLES.settings, next);
+  await mutateTable<AppSettings>(TABLES.settings, (all) => {
+    const next = all.filter((s) => s.key !== key);
+    return { records: next.length === all.length ? null : next, result: undefined };
+  });
 }
 
 // ========== RECEIPT CACHE ==========
 
 export async function cacheReceipt(saleId: string, svgContent: string): Promise<void> {
   const existing = await findFirstByField<ReceiptCache>(TABLES.receiptCache, 'saleId', saleId);
-  if (!existing) {
-    await addRecord<ReceiptCache>(TABLES.receiptCache, {
-      saleId,
-      svgContent,
-      pdfGenerated: false,
-      createdAt: new Date(),
-    } as ReceiptCache);
-  }
+  if (existing) return;
+  await mutateTable<ReceiptCache>(TABLES.receiptCache, (all) => {
+    if (all.some((r) => r.saleId === saleId)) return { records: null, result: undefined };
+    let maxId = 0;
+    for (const r of all) if (typeof r.id === 'number' && r.id > maxId) maxId = r.id;
+    const record = { id: maxId + 1, saleId, svgContent, pdfGenerated: false, createdAt: new Date() } as ReceiptCache;
+    return { records: [...all, record], result: undefined };
+  });
 }
 
 export async function getCachedReceipt(saleId: string): Promise<ReceiptCache | undefined> {
@@ -267,30 +295,34 @@ function pickLatest(a: DailyReportRecord, b: DailyReportRecord): DailyReportReco
  * finalized the slot is locked and any further write is refused.
  */
 export async function addDailyReport(report: Omit<DailyReportRecord, 'id'>): Promise<number> {
-  const all = await readTable<DailyReportRecord>(TABLES.dailyReports);
-  const sameDate = all.filter((r) => r.date === report.date && r.id !== undefined);
+  return mutateTable<DailyReportRecord, number>(TABLES.dailyReports, (all) => {
+    const sameDate = all.filter((r) => r.date === report.date && r.id !== undefined);
 
-  if (sameDate.length === 0) {
-    return addRecord<DailyReportRecord>(TABLES.dailyReports, report as DailyReportRecord);
-  }
+    if (sameDate.length === 0) {
+      let maxId = 0;
+      for (const r of all) if (typeof r.id === 'number' && r.id > maxId) maxId = r.id;
+      const id = maxId + 1;
+      return { records: [...all, { ...report, id } as DailyReportRecord], result: id };
+    }
 
-  // A finalized day is locked — refuse to overwrite it (matches the contract's
-  // `require(!finalized)`). The UI hides the buttons, so this is a hard guard.
-  if (sameDate.some((r) => r.finalized)) {
-    throw new Error(`Day ${report.date} is finalized and cannot be overwritten.`);
-  }
+    // A finalized day is locked — refuse to overwrite it (matches the contract's
+    // `require(!finalized)`). The UI hides the buttons, so this is a hard guard.
+    // Checked under the table's lock, so a finalize that just landed counts.
+    if (sameDate.some((r) => r.finalized)) {
+      throw new Error(`Day ${report.date} is finalized and cannot be overwritten.`);
+    }
 
-  // Keep one record (lowest id — oldest, will be updated in place), drop the rest.
-  const keeper = sameDate.reduce((acc, r) => ((r.id ?? Infinity) < (acc.id ?? Infinity) ? r : acc));
-  const dropIds = new Set(sameDate.filter((r) => r.id !== keeper.id).map((r) => r.id));
-  const cleaned = all.filter((r) => !dropIds.has(r.id));
+    // Keep one record (lowest id — oldest, will be updated in place), drop the rest.
+    const keeper = sameDate.reduce((acc, r) => ((r.id ?? Infinity) < (acc.id ?? Infinity) ? r : acc));
+    const dropIds = new Set(sameDate.filter((r) => r.id !== keeper.id).map((r) => r.id));
+    const cleaned = all.filter((r) => !dropIds.has(r.id));
 
-  // Apply the new report content to the keeper.
-  const idx = cleaned.findIndex((r) => r.id === keeper.id);
-  if (idx >= 0) cleaned[idx] = { ...cleaned[idx], ...report };
+    // Apply the new report content to the keeper.
+    const idx = cleaned.findIndex((r) => r.id === keeper.id);
+    if (idx >= 0) cleaned[idx] = { ...cleaned[idx], ...report };
 
-  await writeTable<DailyReportRecord>(TABLES.dailyReports, cleaned);
-  return keeper.id as number;
+    return { records: cleaned, result: keeper.id as number };
+  });
 }
 
 /**

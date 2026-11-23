@@ -16,7 +16,7 @@
  */
 
 import { addSaleRecord } from "@/lib/storage/database";
-import { readTable, writeTable } from "@/lib/storage/host-storage";
+import { mutateTable, readTable } from "@/lib/storage/host-storage";
 import type { SaleRecord } from "@/lib/storage/types";
 import { amountToPlanck, formatAmountFromPlanck } from "@/lib/utils/format";
 import {
@@ -107,19 +107,10 @@ export async function getPendingClaims(): Promise<PendingClaim[]> {
   return readTable<PendingClaim>(TABLE);
 }
 
-// The table is read, changed and written back; run those one at a time so a
-// save and a drop that overlap cannot erase each other.
-let tableQueue: Promise<unknown> = Promise.resolve();
-function serialized<T>(change: () => Promise<T>): Promise<T> {
-  const run = tableQueue.then(change, change);
-  tableQueue = run.catch(() => undefined);
-  return run;
-}
-
 /** Record (or extend) the pending claim for `paymentId` with `topUpIds`. */
 export function savePendingClaim(claim: Omit<PendingClaim, "createdAt">): Promise<void> {
-  return serialized(async () => {
-    const all = await getPendingClaims();
+  // Under the table's lock: a save and a drop that overlap cannot erase each other.
+  return mutateTable<PendingClaim>(TABLE, (all) => {
     const existing = all.find((c) => c.paymentId === claim.paymentId);
     const topUpIds = [...new Set([...(existing?.topUpIds ?? []), ...claim.topUpIds])];
     const next: PendingClaim = {
@@ -127,16 +118,15 @@ export function savePendingClaim(claim: Omit<PendingClaim, "createdAt">): Promis
       topUpIds,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
     };
-    await writeTable(TABLE, [...all.filter((c) => c.paymentId !== claim.paymentId), next]);
+    return { records: [...all.filter((c) => c.paymentId !== claim.paymentId), next], result: undefined };
   });
 }
 
 export function dropPendingClaim(paymentId: string): Promise<void> {
-  return serialized(async () => {
-    const all = await getPendingClaims();
-    if (!all.some((c) => c.paymentId === paymentId)) return;
-    await writeTable(TABLE, all.filter((c) => c.paymentId !== paymentId));
-  });
+  return mutateTable<PendingClaim>(TABLE, (all) => ({
+    records: all.some((c) => c.paymentId === paymentId) ? all.filter((c) => c.paymentId !== paymentId) : null,
+    result: undefined,
+  }));
 }
 
 // Claims this document is running itself; a resume leaves them alone.

@@ -82,7 +82,15 @@ export default function DailyReportsPage() {
     const day = entry.date.split("#")[0] ?? entry.date;
     const dayStart = new Date(day + "T00:00:00");
     const dayEnd = new Date(day + "T23:59:59.999");
-    const daySales = await getSalesForMerchantByDate(merchant, dayStart, dayEnd);
+    let daySales: SaleRecord[];
+    try {
+      daySales = await getSalesForMerchantByDate(merchant, dayStart, dayEnd);
+    } catch (err) {
+      // Not closed: the day's sales could not be read. The storage banner says why.
+      console.warn("[DailyReports] could not read the day's sales:", err);
+      setPrintMessage({ tone: "error", text: "Couldn't read that day's sales, so the period was not closed. Try again." });
+      return;
+    }
     const priorClose = reports
       .filter((r) => r.finalized && (r.date.split("#")[0] ?? r.date) === day)
       .map((r) => new Date(r.periodClosedAt ?? r.publishedAt).getTime())
@@ -141,7 +149,12 @@ export default function DailyReportsPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const load = () => getAllDailyReports().then((r) => { setReports(r); setIsLoading(false); });
+    const load = () =>
+      getAllDailyReports()
+        .then((r) => setReports(r))
+        // The storage banner says why; stop loading. A recovery refetches.
+        .catch((err) => console.warn("[DailyReports] reports unreadable:", err))
+        .finally(() => setIsLoading(false));
     load();
     return onStorageChange("dailyReports", load);
   }, []);
@@ -157,7 +170,9 @@ export default function DailyReportsPage() {
       const today = todayString();
       const dayStart = new Date(today + "T00:00:00");
       const dayEnd = new Date(today + "T23:59:59.999");
-      void getSalesForMerchantByDate(merchant, dayStart, dayEnd).then(setTodaySales);
+      void getSalesForMerchantByDate(merchant, dayStart, dayEnd)
+        .then(setTodaySales)
+        .catch((err) => console.warn("[DailyReports] sales unreadable:", err));
     };
 
     load();

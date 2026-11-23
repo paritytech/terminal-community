@@ -56,6 +56,9 @@ export function useTerminalIdentity() {
         if (!mounted) return;
         setName(storedName ?? "");
         setTerminalId(id);
+      } catch (err) {
+        // The storage banner says why; a recovery reloads this.
+        console.warn("[Terminal] identity unavailable:", err);
       } finally {
         if (mounted) setIsLoading(false);
       }

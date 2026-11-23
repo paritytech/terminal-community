@@ -11,6 +11,7 @@ import { useBulletin } from "@/lib/hooks/use-bulletin";
 import { useSalesHistory, addCsvReport, getAllCsvReports, type CsvReportRecord, type SaleRecord } from "@/lib/storage";
 import { captureError } from "@/lib/telemetry";
 import { saveFile } from "@/lib/utils/save-file";
+import { onStorageChange } from "@/lib/storage/host-storage";
 import {
   type ExportRow,
   buildCsv,
@@ -90,7 +91,14 @@ export default function ExportCsvPage() {
   const [viewReport, setViewReport] = useState<CsvReportRecord | null>(null);
 
   useEffect(() => {
-    getAllCsvReports().then(setReports).catch(() => setReports([]));
+    const load = () => {
+      getAllCsvReports()
+        .then(setReports)
+        .catch(() => setReports((prev) => prev ?? []));
+    };
+    load();
+    // Reloads after a failed read once the storage recovers, too.
+    return onStorageChange("csvReports", load);
   }, []);
 
   useEffect(() => {
@@ -163,8 +171,22 @@ export default function ExportCsvPage() {
         csv: buildCsv(rows),
         createdAt: new Date(),
       };
-      await addCsvReport(record);
-      setReports(await getAllCsvReports());
+      // Kept for re-download when the storage takes it; otherwise (too large
+      // to keep, or the storage failing) it is downloaded right away rather
+      // than lost.
+      let kept: number | null = null;
+      try {
+        kept = await addCsvReport(record);
+      } catch (cacheErr) {
+        console.warn("[Export] could not keep the CSV:", cacheErr);
+      }
+      if (kept == null) {
+        const name = record.fromYmd === record.toYmd
+          ? `t3rminal-sales-${record.fromYmd}.csv`
+          : `t3rminal-sales-${record.fromYmd}_${record.toYmd}.csv`;
+        await saveFile(name, new Blob([record.csv], { type: "text/csv" }));
+      }
+      setReports(await getAllCsvReports().catch(() => reports));
       setPeriod(null);
       setCustomRange(null);
       setShowSuccess(true);

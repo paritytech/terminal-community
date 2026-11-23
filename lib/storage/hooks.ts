@@ -3,19 +3,31 @@
  * Uses event-based reactivity with host localStorage
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
-import { readTable } from './host-storage';
-import { onStorageChange } from './host-storage';
+import { useState, useCallback, useMemo, useEffect, useSyncExternalStore } from 'react';
+import { readTable, getSaleStorageHealth, getStorageHealth, onStorageChange, onStorageHealth, type StorageHealth } from './host-storage';
 import { addSaleRecord, searchSales } from './database';
 import type { SaleRecord, TransactionType } from './types';
 import { useAccount } from '@/lib/web3';
 import { normalizeToAssetHubAddress } from '@/lib/utils/address';
 import { useAdminQrPayload } from '@/lib/config/admin-qr-binding';
 
+/** The host storage's health, live (see ./host-storage.ts). */
+const HEALTHY: StorageHealth = { ok: true };
+
+/** The storage as a whole (any table). */
+export function useStorageHealth(): StorageHealth {
+  return useSyncExternalStore(onStorageHealth, getStorageHealth, () => HEALTHY);
+}
+
+/** Whether a sale can be kept (the tables it needs, the driver, the bridge). */
+export function useSaleStorageHealth(): StorageHealth {
+  return useSyncExternalStore(onStorageHealth, getSaleStorageHealth, () => HEALTHY);
+}
+
 /**
  * Hook that re-fetches data when a table changes (replaces useLiveQuery)
  */
-function useTableQuery<T>(table: string, query: () => Promise<T>, deps: any[] = []): T | undefined {
+function useTableQuery<T>(table: string, query: () => Promise<T>, deps: any[] = [], fallback?: T): T | undefined {
   const [data, setData] = useState<T | undefined>(undefined);
 
   const refresh = useCallback(async () => {
@@ -23,7 +35,10 @@ function useTableQuery<T>(table: string, query: () => Promise<T>, deps: any[] = 
       const result = await query();
       setData(result);
     } catch (err) {
+      // The storage banner says why; the screen stops loading, keeping what
+      // it showed. It refetches once the storage recovers (a change event).
       console.warn(`[Storage] Query failed for ${table}:`, err);
+      setData((prev) => (prev === undefined ? fallback : prev));
     }
   }, deps);
 
@@ -77,7 +92,8 @@ export function useSalesHistory() {
         (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
       );
     },
-    [merchantAddress]
+    [merchantAddress],
+    []
   );
 
   const filteredSales = useMemo(() => {
@@ -178,7 +194,8 @@ export function useTodaysIncome() {
 
       return total;
     },
-    [merchantAddress]
+    [merchantAddress],
+    0n
   );
 
   return {
@@ -230,7 +247,8 @@ export function useSale(saleId: string | null) {
       const all = await readTable<SaleRecord>('sales');
       return all.find((s) => s.saleId === saleId) || null;
     },
-    [saleId]
+    [saleId],
+    null
   );
 
   return { sale: sale ?? null, isLoading: sale === undefined };
