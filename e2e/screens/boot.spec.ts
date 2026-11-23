@@ -1,5 +1,5 @@
 import { test, expect } from "../host/fixture";
-import { bootTerminal, chargeAndPay } from "../host/flows";
+import { bootTerminal, charge, chargeAndPay, enterAmount, storedSales, waitForSale } from "../host/flows";
 import { productPath } from "./screens.helpers";
 
 /**
@@ -139,84 +139,125 @@ test.describe("boot", () => {
 
   test.describe("host storage", () => {
     const FINAL_AT_ONCE = [{ status: { tag: "Claimed" as const, finalized: true }, afterMs: 50 }];
-    const DEMOTED = "[HostStorage] host writeJSON failed — switching to in-memory store for the rest of the session.";
+    const FULL_COPY = "The Polkadot app's storage is full, so new sales can't be saved. Payments are paused until there is room.";
 
     test.describe("full from launch", () => {
       test.use({ hostOptions: { storageMode: "Full", topUpScript: FINAL_AT_ONCE } });
 
-      test("host storage full → the sale still completes in memory, and nothing survives a restart", async ({ host, page }) => {
-        const warnings: string[] = [];
-        page.on("console", (m) => { if (m.type() === "warning") warnings.push(m.text()); });
+      test("host storage full → the merchant is told, no payment is taken, and it sells again once there is room", async ({ host }) => {
         const frame = await bootTerminal(host);
 
-        // The app tried to write its settings, was refused, and switched to
-        // memory for the rest of the session.
+        // The launch-time settings write is refused: no quiet switch to memory,
+        // the merchant is told.
         await host.next("storageWriteRejected", (e) => e.key === "settings" && e.mode === "Full");
-        await expect.poll(() => warnings.some((w) => w.startsWith(DEMOTED))).toBe(true);
+        const banner = frame.locator('[data-testid="storage-health-banner"]');
+        await expect(banner).toHaveAttribute("data-kind", "full");
+        await expect(banner).toContainText(FULL_COPY);
 
+        // A sale it could not keep is not taken: no QR, no subscription.
         const since = host.mark();
-        const { req } = await chargeAndPay(host, frame, "6.40");
-        await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
-        await frame.locator('[data-testid="btn-done"]').click();
+        await enterAmount(frame, "6.40");
+        await frame.locator('[data-testid="btn-charge"]').click();
+        await expect(frame.locator('[data-testid="terminal-connectivity-warning"]')).toHaveText(FULL_COPY);
+        await expect(frame.locator('[data-testid="waiting-text"]')).toHaveCount(0);
+        expect(host.events.slice(since).some((e) => e.type === "statementSubscribe")).toBe(false);
 
-        // The app carries on from memory: History and Home show the sale.
-        await frame.getByRole("link", { name: "History", exact: true }).click();
-        const row = frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`);
-        await expect(row).toBeVisible();
-        await expect(row).toContainText("6.40");
-        await frame.getByRole("link", { name: "Home", exact: true }).click();
-        await expect(frame.locator('[data-testid="todays-income"]')).toHaveText("6.40");
-
-        // Once demoted, the app stops knocking on the full host: the sale
-        // went to memory without another write attempt.
-        expect(host.events.slice(since).filter((e) => e.type === "storageWriteRejected" || e.type === "storageWrite")).toEqual([]);
-
-        // A restart starts a new session. The host is healthy again and the
-        // app writes to it again; the memory-only sale is gone.
+        // Room again: "Check again" clears the banner, and the next sale is kept.
         await host.setStorageMode("ok");
-        const restart = host.mark();
+        await frame.locator('[data-testid="btn-storage-check"]').click();
+        await expect(banner).toHaveCount(0);
+        // The amount is still on the keypad: Charge it again.
+        await frame.locator('[data-testid="btn-charge"]').click();
+        await expect(frame.locator('[data-testid="waiting-text"]')).toHaveText("Scan QR to pay", { timeout: 30_000 });
+        const { req } = await host.pay();
+        expect(req.amount).toBe("6.40");
+        await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+        await waitForSale(host, req.id);
+
+        // It survives a restart.
         await host.restartProduct("/history");
         await expect.poll(() => productPath(host)).toBe("/history");
         await host.settle();
-        await expect(frame.locator('[data-testid="history-empty"]')).toHaveText("No Transactions Yet");
-        await expect(frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`)).toHaveCount(0);
-        await host.next("storageWrite", (e) => e.key === "settings", { since: restart });
+        await expect(frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`)).toContainText("6.40");
       });
     });
 
-    test.describe("fills up mid-session", () => {
+    test.describe("full when the cheque arrives", () => {
       test.use({ hostOptions: { topUpScript: FINAL_AT_ONCE } });
 
-      test("the sale's writes are refused, and the sale still shows from memory", async ({ host, page }) => {
-        const warnings: string[] = [];
-        page.on("console", (m) => { if (m.type() === "warning") warnings.push(m.text()); });
+      test("the coins are not claimed while the sale can't be kept; Retry claims them once there is room", async ({ host }) => {
         const frame = await bootTerminal(host);
-        // Let the launch-time settings write land on the healthy host first.
         await host.next("storageWrite", (e) => e.key === "settings");
         await host.settle();
 
+        const req = await charge(host, frame, "3.20");
         await host.setStorageMode("Full");
         const since = host.mark();
-        const { req } = await chargeAndPay(host, frame, "3.20");
+        await host.pay({ req });
+
+        // The claim's record is refused, so the claim does not start.
+        await host.next("storageWriteRejected", (e) => e.key === "pendingClaims", { since });
+        await expect(frame.locator('[data-testid="coins-claim-error"]')).toContainText("can't save this sale right now");
+        expect(host.events.slice(since).some((e) => e.type === "topUp")).toBe(false);
+
+        // Room again: Retry claims, and the sale is kept.
+        await host.setStorageMode("ok");
+        await frame.locator('[data-testid="btn-retry-claim"]').click();
+        await host.waitForTopUp({ since });
         await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+        const sale = await waitForSale(host, req.id);
+        expect(sale.amount).toBe("3.20");
+        await expect(frame.locator('[data-testid="sale-not-saved"]')).toHaveCount(0);
+      });
+    });
 
-        // The app tried to store the sale on the host and was refused: its
-        // first write is the pending claim it keeps before registering…
-        const refused = await host.next("storageWriteRejected", undefined, { since });
-        expect(refused).toEqual({ type: "storageWriteRejected", key: "pendingClaims", mode: "Full" });
-        await expect.poll(() => warnings.some((w) => w.startsWith(DEMOTED))).toBe(true);
+    test.describe("fills up during the claim", () => {
+      test.use({ hostOptions: { topUpScript: "manual" } });
 
-        // …and kept it in memory: History and Home still show it.
+      /** Charge and pay; the store fills after the claim's record was kept. */
+      async function payWhileFilling(host: Parameters<typeof bootTerminal>[0], amount: string) {
+        const frame = await bootTerminal(host);
+        await host.next("storageWrite", (e) => e.key === "settings");
+        await host.settle();
+        const { req, topUp } = await chargeAndPay(host, frame, amount);
+        await host.setStorageMode("Full");
+        await host.emitTopUpStatus(topUp.idHex, { tag: "Claimed", finalized: true });
+        await expect(frame.locator('[data-testid="payment-completed"]')).toHaveText("Payment received");
+        await host.next("storageWriteRejected", (e) => e.key === "sales");
+        return { frame, req };
+      }
+
+      test("a paid sale the host will not keep is flagged, and Save again keeps it once there is room", async ({ host }) => {
+        const { frame, req } = await payWhileFilling(host, "3.20");
+        await expect(frame.locator('[data-testid="sale-not-saved"]')).toBeVisible();
+        await expect(frame.locator('[data-testid="storage-health-banner"]')).toHaveAttribute("data-kind", "full");
+        expect((await storedSales(host)).find((s) => s.saleId === req.id)).toBeUndefined();
+
+        await host.setStorageMode("ok");
+        await frame.locator('[data-testid="btn-save-sale-again"]').click();
+        await expect(frame.locator('[data-testid="sale-not-saved"]')).toHaveCount(0);
+        const sale = await waitForSale(host, req.id);
+        expect(sale.amount).toBe("3.20");
+        await expect(frame.locator('[data-testid="storage-health-banner"]')).toHaveCount(0);
         await frame.locator('[data-testid="btn-done"]').click();
         await frame.getByRole("link", { name: "History", exact: true }).click();
-        const row = frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`);
-        await expect(row).toBeVisible();
-        await expect(row).toContainText("3.20");
-        await frame.getByRole("link", { name: "Home", exact: true }).click();
-        await expect(frame.locator('[data-testid="todays-income"]')).toHaveText("3.20");
-        // One refusal was enough: no further host writes this session.
-        expect(host.events.slice(since).filter((e) => e.type === "storageWriteRejected")).toHaveLength(1);
-        expect(host.events.slice(since).filter((e) => e.type === "storageWrite")).toEqual([]);
+        await expect(frame.locator(`[data-testid="history-row-${req.id.slice(-4)}"]`)).toContainText("3.20");
+      });
+
+      test("Done does not lose a sale the host would not keep; Check again saves it once there is room", async ({ host }) => {
+        const { frame, req } = await payWhileFilling(host, "2.70");
+        await expect(frame.locator('[data-testid="sale-not-saved"]')).toBeVisible();
+        await frame.locator('[data-testid="btn-done"]').click();
+
+        const banner = frame.locator('[data-testid="storage-health-banner"]');
+        await expect(banner.locator('[data-testid="unsaved-sales-count"]')).toHaveText("1 paid sale isn't saved yet.");
+
+        await host.setStorageMode("ok");
+        await banner.locator('[data-testid="btn-storage-check"]').click();
+        await expect(banner).toHaveCount(0);
+        const sale = await waitForSale(host, req.id);
+        expect(sale.amount).toBe("2.70");
+        expect((await storedSales(host)).filter((s) => s.saleId === req.id)).toHaveLength(1);
       });
     });
   });

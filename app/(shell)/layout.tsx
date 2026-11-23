@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { BottomNav } from "@/components/bottom-nav";
 import { NavLockProvider } from "@/components/nav-lock";
+import { StorageHealthBanner } from "@/components/storage-health-banner";
 
 /**
  * App shell for every page that shows the bottom tab bar. Owns the one
@@ -17,6 +18,7 @@ export default function ShellLayout({ children }: { children: ReactNode }) {
   return (
     <NavLockProvider>
       <div className="flex h-dvh flex-col bg-surface-main">
+        <StorageHealthBanner />
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
         <BottomNav />
       </div>

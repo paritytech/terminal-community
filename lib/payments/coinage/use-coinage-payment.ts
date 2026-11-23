@@ -40,6 +40,14 @@ import {
   type TopUpStatusEvent,
 } from "./claim";
 import { markClaimInSession } from "./pending-claims";
+import { StorageError } from "@/lib/storage/host-storage";
+
+/**
+ * What the merchant reads when the storage refused the claim's record: the
+ * coins are not claimed, so nothing is taken that could not be recorded.
+ */
+const STORAGE_REFUSED_COPY =
+  "The Polkadot app can't save this sale right now, so its coins were not claimed yet. Once it can, retry.";
 
 type ChequePayload = ReturnType<typeof decryptStatementData>["payload"];
 
@@ -305,7 +313,11 @@ export function useCoinagePayment(
             try {
               await onClaimStartingRef.current?.({ paymentId: id, requestedAmount: claimed.amount, topUpIds });
             } catch (persistError) {
-              // Not fatal: the claim goes ahead, it just would not survive a restart.
+              // The storage refused it: claiming now would take coins the sale
+              // could not be recorded for. Stop; Retry claims once it can.
+              if (persistError instanceof StorageError) throw persistError;
+              // Anything else is not the storage's verdict: go ahead, the claim
+              // just would not survive a restart.
               captureWarning("could not persist the pending claim", { paymentId: id, detail: describeError(persistError) });
             }
             if (cancelled) return;
@@ -384,7 +396,7 @@ export function useCoinagePayment(
             captureWarning(`topUp failed: ${kind}`, { paymentId: id, registrations, detail });
             setClaimStage(null);
             setErrorKind(kind);
-            setError(describeTopupFailure(kind));
+            setError(err instanceof StorageError ? STORAGE_REFUSED_COPY : describeTopupFailure(kind));
             setStatus("error");
             // Let a fresh statement for this sale (or the manual retry) try again.
             processed = false;

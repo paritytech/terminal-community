@@ -55,6 +55,18 @@ describe("runTopUpWatch", () => {
     expect(d.markSaleReverted).toHaveBeenCalledWith(SALE);
   });
 
+  it("keeps the last word when the storage refuses to write it, and writes it once the storage takes it — no re-subscribe", async () => {
+    const { d, h } = deps([[{ type: "notClaimed" }]]);
+    let refusals = 2;
+    const markSaleReverted = vi.fn(async () => {
+      if (refusals-- > 0) throw Object.assign(new Error("storage write failed: full"), { name: "StorageError" });
+    });
+    const result = await runTopUpWatch(target, { ...d, markSaleReverted, storageRetryMs: 1 }, new AbortController().signal);
+    expect(result).toBe("final");
+    expect(markSaleReverted).toHaveBeenCalledTimes(3);
+    expect(h.subscribedIds).toHaveLength(1);
+  });
+
   it("re-subscribes when the host drops the subscription, then applies the final status", async () => {
     const { d, h } = deps([[{ interrupt: { name: "PaymentTopUpStatusErr::Unknown" } }], [{ type: "claimed", finalized: true }]]);
     const result = await runTopUpWatch(target, d, new AbortController().signal);
